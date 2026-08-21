@@ -521,7 +521,7 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
   nudgePersistTimer_.setSingleShot(true);
   nudgePersistTimer_.setInterval(kNudgeCoalesceMs);
   connect(&nudgePersistTimer_, &QTimer::timeout, this,
-          [this] { scheduleSnapshot(); });
+          [this] { endNudgeRun(); });
   connect(
       textEditor_, &QLineEdit::textChanged, this, [this](const QString &text) {
         const QFontMetrics metrics(textEditor_->font());
@@ -1054,21 +1054,23 @@ void CaptureEditor::duplicateSelectedAnnotation() {
   if (dragging_ || textEditor_->isVisible() || selectedAnnotation_ < 0 ||
       selectedAnnotation_ >= annotations_.size())
     return;
-  recordEdit();
+  endNudgeRun();
   Annotation copy = annotations_.at(selectedAnnotation_);
+  copy.id = 0;
   translateAnnotation(
       copy, duplicateOffset(annotationBounds(copy), selection_.size()));
   if (copy.kind == Annotation::Kind::Marker)
-    copy.number = nextMarker_++;
+    copy.number = nextMarker_;
   if (copy.kind == Annotation::Kind::Redaction) {
     // A copy must not share the original's mosaic; give it its own seed.
     copy.redactionSeed = freshRedactionSeed();
   }
-  annotations_.push_back(std::move(copy));
-  selectedAnnotation_ = annotations_.size() - 1;
-  selectedAnnotations_ = {selectedAnnotation_};
+  commitAnnotate(std::move(copy));
+  if (!annotations_.isEmpty()) {
+    selectedAnnotation_ = annotations_.size() - 1;
+    selectedAnnotations_ = {selectedAnnotation_};
+  }
   setStatus(QStringLiteral("Duplicated · Alt+D again offsets further"));
-  scheduleSnapshot();
 }
 
 void CaptureEditor::scaleSelectedAnnotation(qreal factor) {
@@ -1182,7 +1184,7 @@ void CaptureEditor::nudgeSelectedAnnotation(const QPointF &delta) {
   // Presses in quick succession (a held key) share one undo entry and one
   // deferred snapshot.
   if (!nudgeTimer_.isValid() || nudgeTimer_.elapsed() > kNudgeCoalesceMs)
-    recordEdit();
+    endNudgeRun();
   nudgeTimer_.restart();
   translateAnnotation(annotations_[selectedAnnotation_], delta);
   setStatus(QStringLiteral("Nudged · arrows move 1 px · Shift 10 px"));
@@ -1190,11 +1192,13 @@ void CaptureEditor::nudgeSelectedAnnotation(const QPointF &delta) {
 }
 
 void CaptureEditor::endNudgeRun() {
+  const bool hadRun = nudgeTimer_.isValid();
   nudgeTimer_.invalidate();
-  if (nudgePersistTimer_.isActive()) {
+  if (nudgePersistTimer_.isActive())
     nudgePersistTimer_.stop();
-    scheduleSnapshot();
-  }
+  if (hadRun && selectedAnnotation_ >= 0 &&
+      selectedAnnotation_ < annotations_.size())
+    commitPatch({selectedAnnotation_});
 }
 
 QRectF CaptureEditor::colorPaletteRect() const {
