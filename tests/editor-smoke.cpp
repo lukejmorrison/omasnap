@@ -974,8 +974,9 @@ bool runQuickOutputChecks(QString &error) {
 }
 
 /**
- * Crash recovery: the working snapshot must reach disk while editing, must be
- * consumed by the save as a default-encoded file, and must not outlive a quit.
+ * Crash recovery: the original source plus op-log JSON must reach disk while
+ * editing, save still writes one flattened PNG, and quit removes the working
+ * document.
  */
 bool runCrashSnapshotChecks(const CaptureData &capture, QString &error) {
   QTemporaryDir directory;
@@ -1024,9 +1025,15 @@ bool runCrashSnapshotChecks(const CaptureData &capture, QString &error) {
     }
     editor.waitForSnapshot();
     const QImage current = editor.renderCurrentOutput();
+    const QString logPath = operationLogPath(snapshotPath);
+    OperationLog log;
+    QString logError;
     if (QImage(snapshotPath).convertToFormat(QImage::Format_ARGB32) !=
-        current.convertToFormat(QImage::Format_ARGB32)) {
-      error = QStringLiteral("Working snapshot did not reflect the edit");
+            capture.source.convertToFormat(QImage::Format_ARGB32) ||
+        !loadOperationLog(logPath, log, logError) || log.ops.isEmpty() ||
+        log.index <= 0) {
+      error = QStringLiteral(
+          "Working document did not keep the source image and op log");
       return false;
     }
     QByteArray reference;
@@ -1039,6 +1046,7 @@ bool runCrashSnapshotChecks(const CaptureData &capture, QString &error) {
         QDir(directory.path())
             .entryList({QStringLiteral("*.png")}, QDir::Files);
     if (files.size() != 1 || QFile::exists(snapshotPath) ||
+        QFile::exists(logPath) ||
         QFileInfo(QDir(directory.path()).filePath(files.constFirst())).size() >
             reference.size() * 3 / 2) {
       error = QStringLiteral(
@@ -1768,7 +1776,6 @@ bool runAsyncCaptureRegionSmoke(QApplication &application, QString &error) {
                   QFileDevice::ExeOwner);
   };
   const QString fakeHyprctl = QDir(commands.path()).filePath(QStringLiteral("hyprctl"));
-  const QString fakeGrim = QDir(commands.path()).filePath(QStringLiteral("grim"));
   const QByteArray hyprctlScript =
       QByteArrayLiteral("#!/usr/bin/env bash\n"
                         "if [[ \"$1 $2\" == \"monitors -j\" ]]; then\n"
@@ -1779,13 +1786,7 @@ bool runAsyncCaptureRegionSmoke(QApplication &application, QString &error) {
                         "else\n"
                         "  printf '[]\\n'\n"
                         "fi\n");
-  // grim streams the capture on stdout.
-  const QByteArray grimScript =
-      QByteArrayLiteral("#!/usr/bin/env bash\n"
-                        "set -euo pipefail\n"
-                        "cat -- \"$OMASNAP_TEST_PPM\"\n");
-  if (!writeExecutable(fakeHyprctl, hyprctlScript) ||
-      !writeExecutable(fakeGrim, grimScript)) {
+  if (!writeExecutable(fakeHyprctl, hyprctlScript)) {
     error = QStringLiteral("Could not create async capture commands");
     return false;
   }
@@ -1793,16 +1794,16 @@ bool runAsyncCaptureRegionSmoke(QApplication &application, QString &error) {
   QImage source(320, 240, QImage::Format_RGB32);
   source.fill(QColor(QStringLiteral("#28405c")));
   const QString sourcePath =
-      QDir(commands.path()).filePath(QStringLiteral("source.ppm"));
-  if (!source.save(sourcePath, "PPM")) {
+      QDir(commands.path()).filePath(QStringLiteral("source.png"));
+  if (!source.save(sourcePath, "PNG")) {
     error = QStringLiteral("Could not create async capture source");
     return false;
   }
 
   const QByteArray oldPath = qgetenv("PATH");
-  const QByteArray oldPpm = qgetenv("OMASNAP_TEST_PPM");
+  const QByteArray oldCapture = qgetenv("OMASNAP_TEST_CAPTURE");
   qputenv("PATH", commands.path().toUtf8() + ':' + oldPath);
-  qputenv("OMASNAP_TEST_PPM", sourcePath.toUtf8());
+  qputenv("OMASNAP_TEST_CAPTURE", sourcePath.toUtf8());
 
   CaptureData capture;
   capture.monitor.name = QStringLiteral("TEST");
@@ -1834,10 +1835,10 @@ bool runAsyncCaptureRegionSmoke(QApplication &application, QString &error) {
                 : captureError;
     editor.close();
     qputenv("PATH", oldPath);
-    if (oldPpm.isEmpty())
-      qunsetenv("OMASNAP_TEST_PPM");
+    if (oldCapture.isEmpty())
+      qunsetenv("OMASNAP_TEST_CAPTURE");
     else
-      qputenv("OMASNAP_TEST_PPM", oldPpm);
+      qputenv("OMASNAP_TEST_CAPTURE", oldCapture);
     return false;
   }
 
@@ -1849,10 +1850,10 @@ bool runAsyncCaptureRegionSmoke(QApplication &application, QString &error) {
   const QImage selected = editor.renderCurrentOutput();
   editor.close();
   qputenv("PATH", oldPath);
-  if (oldPpm.isEmpty())
-    qunsetenv("OMASNAP_TEST_PPM");
+  if (oldCapture.isEmpty())
+    qunsetenv("OMASNAP_TEST_CAPTURE");
   else
-    qputenv("OMASNAP_TEST_PPM", oldPpm);
+    qputenv("OMASNAP_TEST_CAPTURE", oldCapture);
 
   if (selected.size() != QSize(160, 150)) {
     error = QStringLiteral("Async capture region selection produced %1x%2")
@@ -1974,6 +1975,158 @@ bool runSpotlightWheelSmoke(QApplication &application, QString &error) {
   QFile::remove(snapshotPath);
   return true;
 }
+
+/** Window crop, undo/redo replay, persist+reload, and redaction order. */
+bool runOpLogSmoke(QApplication &application, QString &error) {
+  CaptureData capture;
+  capture.monitor.name = QStringLiteral("TEST");
+  capture.monitor.geometry = {0, 0, 800, 600};
+  capture.monitor.pixelSize = {800, 600};
+  capture.monitor.scale = 1.0;
+  capture.source = QImage(800, 600, QImage::Format_ARGB32_Premultiplied);
+  const QColor backdrop(QStringLiteral("#204060"));
+  const QColor secret(QStringLiteral("#ff2040"));
+  capture.source.fill(backdrop);
+  {
+    QPainter painter(&capture.source);
+    painter.fillRect(QRect(200, 200, 100, 60), secret);
+  }
+  capture.previewSize = capture.source.size();
+  capture.windows = {
+      {{80, 80, 300, 220}, QStringLiteral("w1"), QStringLiteral("first")}};
+
+  {
+    const QImage original = capture.source.copy();
+    CaptureEditor editor(capture, CaptureEditor::CaptureMode::Window);
+    editor.resize(800, 600);
+    editor.show();
+    application.processEvents();
+    QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(200, 160));
+    application.processEvents();
+    if (editor.captureData().source != original ||
+        editor.currentSelection() != QRectF(80, 80, 300, 220) ||
+        editor.operationIndex() < 1) {
+      error = QStringLiteral("Window pick recaptured or did not crop the source");
+      return false;
+    }
+    editor.close();
+  }
+
+  CaptureEditor editor(capture, CaptureEditor::CaptureMode::Fullscreen);
+  editor.resize(800, 600);
+  editor.show();
+  application.processEvents();
+  QTest::keyClick(&editor, Qt::Key_D);
+  QTest::keyClick(&editor, Qt::Key_D);
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(230, 214));
+  QTest::mouseMove(&editor, QPoint(333, 285), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(333, 285));
+  QTest::keyClick(&editor, Qt::Key_5);
+  QTest::keyClick(&editor, Qt::Key_A);
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(250, 250));
+  QTest::mouseMove(&editor, QPoint(312, 250), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(312, 250));
+  application.processEvents();
+  if (!editor.waitForSnapshot()) {
+    error = QStringLiteral("Op-log working document did not persist");
+    return false;
+  }
+  const QImage annotated = editor.renderCurrentOutput();
+  const int annotatedIndex = editor.operationIndex();
+  if (annotatedIndex < 2) {
+    error = QStringLiteral("Annotation tools did not append to the op log");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+  application.processEvents();
+  const QImage undone = editor.renderCurrentOutput();
+  if (editor.operationIndex() != annotatedIndex - 1 || undone == annotated) {
+    error = QStringLiteral("Undo did not replay the op log");
+    return false;
+  }
+  QTest::keyClick(&editor, Qt::Key_Y, Qt::ControlModifier);
+  application.processEvents();
+  if (editor.operationIndex() != annotatedIndex ||
+      editor.renderCurrentOutput() != annotated) {
+    error = QStringLiteral("Redo did not replay the op log");
+    return false;
+  }
+
+  QTemporaryDir directory;
+  if (!directory.isValid()) {
+    error = QStringLiteral("Could not create op-log reload directory");
+    return false;
+  }
+  const QString sourceCopy =
+      QDir(directory.path()).filePath(QStringLiteral("working.png"));
+  const QString logCopy = operationLogPath(sourceCopy);
+  if (!QFile::copy(editor.workingSourcePath(), sourceCopy) ||
+      !QFile::copy(editor.workingLogPath(), logCopy)) {
+    error = QStringLiteral("Could not copy the working document");
+    return false;
+  }
+  editor.close();
+
+  QImage restoredSource;
+  if (!restoredSource.load(sourceCopy)) {
+    error = QStringLiteral("Could not reload the persisted source image");
+    return false;
+  }
+  OperationLog log;
+  if (!loadOperationLog(logCopy, log, error))
+    return false;
+  CaptureData restored;
+  restored.source = restoredSource;
+  restored.previewSize = restoredSource.size();
+  restored.monitor.scale = 1.0;
+  restored.monitor.pixelSize = restoredSource.size();
+  restored.monitor.geometry = QRect(QPoint(), restoredSource.size());
+  CaptureEditor reopened(restored, CaptureEditor::CaptureMode::File,
+                         QuickOutputMode::None, log);
+  reopened.resize(800, 600);
+  reopened.show();
+  application.processEvents();
+  const QImage reloaded = reopened.renderCurrentOutput();
+  if (reopened.operationIndex() != annotatedIndex ||
+      reloaded.convertToFormat(QImage::Format_ARGB32) !=
+          annotated.convertToFormat(QImage::Format_ARGB32)) {
+    error = QStringLiteral("Reloading the op log did not restore the view");
+    return false;
+  }
+  QTest::keyClick(&reopened, Qt::Key_Z, Qt::ControlModifier);
+  application.processEvents();
+  if (reopened.renderCurrentOutput().convertToFormat(QImage::Format_ARGB32) !=
+      undone.convertToFormat(QImage::Format_ARGB32)) {
+    error = QStringLiteral("Reloaded undo did not keep working");
+    return false;
+  }
+  QTest::keyClick(&reopened, Qt::Key_Y, Qt::ControlModifier);
+  application.processEvents();
+
+  const QImage replayed = reopened.renderCurrentOutput().convertToFormat(
+      QImage::Format_ARGB32);
+  const QColor covered = replayed.pixelColor(220, 210);
+  const QColor overlay = replayed.pixelColor(260, 230);
+  if (covered == secret || overlay == secret) {
+    error = QStringLiteral("Replay leaked source pixels through redaction");
+    return false;
+  }
+  if (covered != QColor(QStringLiteral("#121216"))) {
+    error = QStringLiteral("Replay did not keep the redaction layer (%1)")
+                .arg(covered.name());
+    return false;
+  }
+  if (overlay != QColor(QStringLiteral("#0a84ff"))) {
+    error = QStringLiteral(
+                "Replay did not keep default-layer annotations above "
+                "redaction (%1)")
+                .arg(overlay.name());
+    return false;
+  }
+  reopened.close();
+  return true;
+}
+
 } // namespace
 /** Runs the interaction and rendering smoke checks. */
 /** Runs the interaction and rendering smoke checks. */
@@ -3759,6 +3912,10 @@ int main(int argc, char **argv) {
     qWarning().noquote() << snapshotError;
     return 95;
   }
+  if (!runOpLogSmoke(application, snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 98;
+  }
   const QString outputRoot =
       argc > 1 ? QString::fromLocal8Bit(argv[1])
                : QDir(QDir::tempPath())
@@ -4330,21 +4487,27 @@ int main(int argc, char **argv) {
           outputRoot + QStringLiteral("-window-mode.png"), "PNG"))
     return 36;
 
-  CaptureData failedWindowCapture = capture;
-  failedWindowCapture.windows = {{{80, 80, 300, 220},
-                                  QStringLiteral("missing-stable-id"),
-                                  QStringLiteral("missing")}};
-  CaptureEditor failedWindowEditor(failedWindowCapture,
-                                   CaptureEditor::CaptureMode::Window);
-  failedWindowEditor.resize(800, 600);
-  failedWindowEditor.show();
-  QTest::mouseMove(&failedWindowEditor, QPoint(200, 160), 20);
-  QTest::keyClick(&failedWindowEditor, Qt::Key_Return);
+  CaptureData windowPickCapture = capture;
+  const QImage originalSource = windowPickCapture.source.copy();
+  CaptureEditor windowPickEditor(windowPickCapture,
+                                 CaptureEditor::CaptureMode::Window);
+  windowPickEditor.resize(800, 600);
+  windowPickEditor.show();
   application.processEvents();
-  if (failedWindowEditor.cursor().shape() != Qt::PointingHandCursor ||
-      !failedWindowEditor.grab().save(
-          outputRoot + QStringLiteral("-window-capture-failed.png"), "PNG"))
+  QTest::mouseClick(&windowPickEditor, Qt::LeftButton, Qt::NoModifier,
+                    QPoint(200, 160));
+  application.processEvents();
+  const QImage windowCrop = windowPickEditor.renderCurrentOutput();
+  const QImage expectedCrop = renderCapture(
+      capture, QRectF(80, 80, 300, 220), {}, BackgroundStyle::None);
+  if (windowPickEditor.captureData().source != originalSource ||
+      windowPickEditor.currentSelection() != QRectF(80, 80, 300, 220) ||
+      windowCrop.convertToFormat(QImage::Format_ARGB32) !=
+          expectedCrop.convertToFormat(QImage::Format_ARGB32) ||
+      !windowPickEditor.grab().save(
+          outputRoot + QStringLiteral("-window-pick-crop.png"), "PNG"))
     return 63;
+  windowPickEditor.close();
 
   CaptureData nativePreviewCapture = capture;
   nativePreviewCapture.monitor.scale = 2.0;
