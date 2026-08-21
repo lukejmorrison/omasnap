@@ -1690,6 +1690,13 @@ void CaptureEditor::commitCrop(const QRectF &crop) {
   commitOp(std::move(op));
 }
 
+void CaptureEditor::commitCut(CutOp cut) {
+  Operation op;
+  op.type = Operation::Type::Cut;
+  op.cut = std::move(cut);
+  commitOp(std::move(op));
+}
+
 void CaptureEditor::commitBackground(BackgroundStyle style) {
   Operation op;
   op.type = Operation::Type::Background;
@@ -1709,9 +1716,13 @@ void CaptureEditor::replayLog() {
           ? annotations_.at(selectedAnnotation_).id
           : 0;
 
-  QRectF selection(QPointF(), capture_.previewSize);
+  const QSize startSize =
+      pristineLogicalSize_.isEmpty() ? capture_.previewSize
+                                     : pristineLogicalSize_;
+  QRectF selection{QPointF(), QSizeF(startSize)};
   BackgroundStyle background = BackgroundStyle::None;
   QVector<Annotation> annotations;
+  QVector<CutOp> cuts;
   int nextMarker = 1;
   for (int index = 0; index < opIndex_ && index < ops_.size(); ++index) {
     const Operation &op = ops_.at(index);
@@ -1749,11 +1760,41 @@ void CaptureEditor::replayLog() {
                                        }),
                         annotations.end());
       break;
+    case Operation::Type::Cut: {
+      const bool horizontal = op.cut.orientation == Qt::Horizontal;
+      const qreal lo = op.cut.logicalStart;
+      const qreal hi = op.cut.logicalEnd;
+      const qreal band = hi - lo;
+      for (Annotation &annotation : annotations) {
+        auto shift = [&](QPointF &point) {
+          if (horizontal)
+            point.setY(shiftForCut(point.y(), lo, hi));
+          else
+            point.setX(shiftForCut(point.x(), lo, hi));
+        };
+        shift(annotation.start);
+        shift(annotation.end);
+        for (QPointF &point : annotation.points)
+          shift(point);
+      }
+      if (band > 0.0) {
+        if (horizontal)
+          selection.setHeight(std::max<qreal>(1.0, selection.height() - band));
+        else
+          selection.setWidth(std::max<qreal>(1.0, selection.width() - band));
+      }
+      cuts.push_back(op.cut);
+      break;
+    }
     }
   }
 
   annotations_ = std::move(annotations);
   backgroundStyle_ = background;
+  if (cuts != cuts_) {
+    cuts_ = std::move(cuts);
+    refreshComposedCapture();
+  }
   if (!selection.isEmpty())
     selection_ = selection;
   nextMarker_ = nextMarker;
@@ -3108,29 +3149,8 @@ void CaptureEditor::mouseReleaseEvent(QMouseEvent *event) {
       update();
       return;
     }
-    recordEdit(); // push pre-cut state (with the OLD selection/annotations)
-    cuts_.push_back(liveCut_);
-    for (Annotation &annotation : annotations_) {
-      // Shift every stored coordinate on the cut axis: horizontal cut shifts
-      // y values, vertical cut shifts x values.
-      auto shift = [&](QPointF &point) {
-        if (horizontal)
-          point.setY(shiftForCut(point.y(), lo, hi));
-        else
-          point.setX(shiftForCut(point.x(), lo, hi));
-      };
-      shift(annotation.start);
-      shift(annotation.end);
-      for (QPointF &point : annotation.points)
-        shift(point);
-    }
-    if (horizontal)
-      selection_.setHeight(std::max<qreal>(1.0, selection_.height() - band));
-    else
-      selection_.setWidth(std::max<qreal>(1.0, selection_.width() - band));
     cutDragActive_ = false;
-    refreshComposedCapture();
-    scheduleSnapshot();
+    commitCut(liveCut_);
     setStatus(QStringLiteral("Cut applied · Ctrl+Z to undo"));
     updatePointerCursor();
     update();

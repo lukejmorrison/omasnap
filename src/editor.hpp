@@ -240,6 +240,7 @@ private:
   void commitPatch(const QVector<int> &indices);
   void commitDelete(const QVector<int> &indices);
   void commitCrop(const QRectF &crop);
+  void commitCut(CutOp cut);
   void commitBackground(BackgroundStyle style);
   void replayLog();
   void redoEdit();

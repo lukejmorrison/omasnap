@@ -1,6 +1,8 @@
 /** @fileoverview Declares screenshot capture, rendering, and output types. */
 #pragma once
 
+#include "cut.hpp"
+
 #include <cstdint>
 
 #include <QPainterPath>
@@ -80,13 +82,14 @@ struct Annotation {
 };
 
 struct Operation {
-  enum class Type { Crop, Background, Annotate, Patch, Delete };
+  enum class Type { Crop, Background, Annotate, Patch, Delete, Cut };
 
   Type type = Type::Annotate;
   QRectF crop;
   BackgroundStyle background = BackgroundStyle::None;
   QVector<Annotation> annotations;
   QVector<quint64> ids;
+  CutOp cut;
 
   bool operator==(const Operation &) const = default;
 };

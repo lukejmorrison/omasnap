@@ -1321,6 +1321,17 @@ QJsonObject operationToJson(const Operation &operation) {
     object.insert(QStringLiteral("ids"), ids);
     break;
   }
+  case Operation::Type::Cut:
+    object.insert(QStringLiteral("type"), QStringLiteral("cut"));
+    object.insert(QStringLiteral("orientation"),
+                  operation.cut.orientation == Qt::Horizontal
+                      ? QStringLiteral("horizontal")
+                      : QStringLiteral("vertical"));
+    object.insert(QStringLiteral("sourceStart"), operation.cut.sourceStart);
+    object.insert(QStringLiteral("sourceEnd"), operation.cut.sourceEnd);
+    object.insert(QStringLiteral("logicalStart"), operation.cut.logicalStart);
+    object.insert(QStringLiteral("logicalEnd"), operation.cut.logicalEnd);
+    break;
   }
   return object;
 }
@@ -1366,6 +1377,22 @@ bool operationFromJson(const QJsonObject &object, Operation &operation,
     operation.type = Operation::Type::Delete;
     for (const QJsonValue value : object.value(QStringLiteral("ids")).toArray())
       operation.ids.push_back(value.toString().toULongLong());
+    return true;
+  }
+  if (type == QStringLiteral("cut")) {
+    operation.type = Operation::Type::Cut;
+    const QString orientation =
+        object.value(QStringLiteral("orientation")).toString();
+    operation.cut.orientation = orientation == QStringLiteral("vertical")
+                                    ? Qt::Vertical
+                                    : Qt::Horizontal;
+    operation.cut.sourceStart =
+        object.value(QStringLiteral("sourceStart")).toInt();
+    operation.cut.sourceEnd = object.value(QStringLiteral("sourceEnd")).toInt();
+    operation.cut.logicalStart =
+        object.value(QStringLiteral("logicalStart")).toInt();
+    operation.cut.logicalEnd =
+        object.value(QStringLiteral("logicalEnd")).toInt();
     return true;
   }
   error = QStringLiteral("Operation log has an unknown operation type");
