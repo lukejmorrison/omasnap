@@ -1487,6 +1487,11 @@ QString recognizeText(const QImage &image, QString &error) {
   return text;
 }
 
+QString shellQuote(QString value) {
+  value.replace('\'', QStringLiteral("'\"'\"'"));
+  return QStringLiteral("'%1'").arg(value);
+}
+
 void sendCaptureNotification(const QString &message, const QString &imagePath) {
   QStringList arguments{QStringLiteral("-g"), QStringLiteral(""),
                         QStringLiteral("--app-name"), QStringLiteral("omasnap"),

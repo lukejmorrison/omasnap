@@ -201,5 +201,7 @@ void prunePinnedSnapshots();
 [[nodiscard]] bool saveTemporarySnapshot(const QImage &image, QString path,
                                          QString &error, int quality = -1);
 [[nodiscard]] QString recognizeText(const QImage &image, QString &error);
+/** Quotes a string for a shell argument passed to omarchy-notification-send. */
+[[nodiscard]] QString shellQuote(QString value);
 void sendCaptureNotification(const QString &message,
                              const QString &imagePath = {});

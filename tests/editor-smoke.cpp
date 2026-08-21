@@ -2127,6 +2127,131 @@ bool runOpLogSmoke(QApplication &application, QString &error) {
   return true;
 }
 
+/** Quotes the same way sendCaptureNotification builds --exec. */
+bool runShellQuoteCheck(QString &error) {
+  if (shellQuote(QStringLiteral("omasnap")) != QStringLiteral("'omasnap'")) {
+    error = QStringLiteral("shellQuote did not wrap a simple token");
+    return false;
+  }
+  if (shellQuote(QStringLiteral("omasnap /tmp/a.png")) !=
+      QStringLiteral("'omasnap /tmp/a.png'")) {
+    error = QStringLiteral("shellQuote did not keep spaces inside quotes");
+    return false;
+  }
+  if (shellQuote(QStringLiteral("it's")) != QStringLiteral("'it'\"'\"'s'")) {
+    error = QStringLiteral("shellQuote did not escape a single quote (%1)")
+                .arg(shellQuote(QStringLiteral("it's")));
+    return false;
+  }
+  sendCaptureNotification(QStringLiteral("smoke"));
+  return true;
+}
+
+/**
+ * Filling the 100-op cap used to drop the leading Crop, so replay started at
+ * the full monitor while later annotations stayed in cropped space.
+ */
+bool runOpLogCapKeepsLeadingCrop(QApplication &application, QString &error) {
+  CaptureData capture;
+  capture.monitor.name = QStringLiteral("TEST");
+  capture.monitor.geometry = {0, 0, 800, 600};
+  capture.monitor.pixelSize = {800, 600};
+  capture.monitor.scale = 1.0;
+  capture.source = QImage(800, 600, QImage::Format_ARGB32_Premultiplied);
+  const QColor outside(QStringLiteral("#102030"));
+  const QColor inside(QStringLiteral("#e8c040"));
+  capture.source.fill(outside);
+  {
+    QPainter painter(&capture.source);
+    painter.fillRect(QRect(80, 80, 300, 220), inside);
+  }
+  capture.previewSize = capture.source.size();
+
+  const QRectF crop(80, 80, 300, 220);
+  OperationLog log;
+  Operation cropOp;
+  cropOp.type = Operation::Type::Crop;
+  cropOp.crop = crop;
+  log.ops.push_back(cropOp);
+  for (int n = 1; n <= 99; ++n) {
+    Annotation marker;
+    marker.kind = Annotation::Kind::Marker;
+    marker.start = QPointF(40, 40);
+    marker.number = n;
+    marker.color = QColor(QStringLiteral("#ff375f"));
+    marker.size = 4.0;
+    marker.id = static_cast<quint64>(n);
+    Operation annotate;
+    annotate.type = Operation::Type::Annotate;
+    annotate.annotations = {marker};
+    log.ops.push_back(std::move(annotate));
+  }
+  log.index = log.ops.size();
+  log.nextId = 100;
+  log.nextMarker = 100;
+
+  CaptureEditor editor(capture, CaptureEditor::CaptureMode::File,
+                       QuickOutputMode::None, log);
+  editor.setSuppressSnapshots(true);
+  editor.resize(800, 600);
+  editor.show();
+  application.processEvents();
+  if (editor.currentSelection() != crop || editor.operationLog().isEmpty() ||
+      editor.operationLog().constFirst().type != Operation::Type::Crop) {
+    error = QStringLiteral("Loaded log did not keep the leading crop");
+    return false;
+  }
+
+  QTest::keyClick(&editor, Qt::Key_C);
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(400, 300));
+  application.processEvents();
+
+  if (editor.operationLog().size() != 100 ||
+      editor.operationLog().constFirst().type != Operation::Type::Crop ||
+      editor.currentSelection() != crop) {
+    error = QStringLiteral("Op-log cap dropped the initial crop");
+    return false;
+  }
+
+  const QImage exported = editor.renderCurrentOutput();
+  if (exported.size() != QSize(300, 220)) {
+    error = QStringLiteral("Capped replay left the full monitor (%1x%2)")
+                .arg(exported.width())
+                .arg(exported.height());
+    return false;
+  }
+  if (exported.pixelColor(10, 10) != inside) {
+    error = QStringLiteral("Capped replay did not stay in cropped space");
+    return false;
+  }
+
+  QTemporaryDir directory;
+  if (!directory.isValid()) {
+    error = QStringLiteral("Could not create op-log cap directory");
+    return false;
+  }
+  const QString logPath =
+      QDir(directory.path()).filePath(QStringLiteral("capped.json"));
+  OperationLog persisted;
+  persisted.ops = editor.operationLog();
+  persisted.index = editor.operationIndex();
+  persisted.nextId = 101;
+  persisted.nextMarker = 101;
+  if (!saveOperationLog(logPath, persisted, error))
+    return false;
+  OperationLog reloaded;
+  if (!loadOperationLog(logPath, reloaded, error))
+    return false;
+  if (reloaded.ops.isEmpty() ||
+      reloaded.ops.constFirst().type != Operation::Type::Crop ||
+      reloaded.ops.constFirst().crop != crop) {
+    error = QStringLiteral("Persisted capped log lost the leading crop");
+    return false;
+  }
+  editor.close();
+  return true;
+}
+
 } // namespace
 /** Runs the interaction and rendering smoke checks. */
 /** Runs the interaction and rendering smoke checks. */
@@ -3915,6 +4040,14 @@ int main(int argc, char **argv) {
   if (!runOpLogSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 98;
+  }
+  if (!runShellQuoteCheck(snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 83;
+  }
+  if (!runOpLogCapKeepsLeadingCrop(application, snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 84;
   }
   const QString outputRoot =
       argc > 1 ? QString::fromLocal8Bit(argv[1])

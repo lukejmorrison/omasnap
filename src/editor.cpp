@@ -1631,7 +1631,12 @@ void CaptureEditor::commitOp(Operation op) {
   ops_.push_back(std::move(op));
   constexpr qsizetype maximumOps = 100;
   while (ops_.size() > maximumOps) {
-    ops_.removeFirst();
+    // Replay starts at the full monitor; the first Crop is the selected
+    // region/window. Dropping it leaves annotations in cropped space.
+    if (ops_.constFirst().type == Operation::Type::Crop)
+      ops_.removeAt(1);
+    else
+      ops_.removeFirst();
     if (opIndex_ > 0)
       --opIndex_;
   }
