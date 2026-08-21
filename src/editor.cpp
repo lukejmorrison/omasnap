@@ -365,16 +365,33 @@ void drawMeasureBadge(QPainter &painter, const QRect &bounds,
 
 void drawHotkeyLegend(QPainter &painter, const QRect &bounds,
                       const QPointF &cursor,
-                      const QVector<QPair<QString, QString>> &entries) {
+                      const QVector<QPair<QString, QString>> &entries,
+                      const QVector<QPointF> &keepVisible = {}) {
   if (entries.isEmpty())
     return;
   constexpr int columns = 2;
   const int rows = (entries.size() + columns - 1) / columns;
   const qreal width = 414;
   const qreal height = rows * 19 + 24;
-  QRectF panel(bounds.width() - width - 14, 14, width, height);
-  if (panel.adjusted(-28, -28, 28, 28).contains(cursor))
-    panel.moveLeft(14);
+  const QRectF right(bounds.width() - width - 14, 14, width, height);
+  const QRectF left(14, 14, width, height);
+  auto hiddenCount = [&](const QRectF &candidate) {
+    int count = 0;
+    for (const QPointF &point : keepVisible) {
+      if (candidate.contains(point))
+        ++count;
+    }
+    return count;
+  };
+  // Flip away from the pointer, but not onto a selected handle. Adding Cut
+  // grew the card far enough that a line-select click near mid-canvas moved
+  // it over the start handle.
+  const bool cursorWantsLeft =
+      right.adjusted(-28, -28, 28, 28).contains(cursor);
+  QRectF panel = cursorWantsLeft ? left : right;
+  const QRectF other = cursorWantsLeft ? right : left;
+  if (hiddenCount(panel) > hiddenCount(other))
+    panel = other;
 
   painter.setPen(QPen(QColor(255, 255, 255, 34), 1));
   painter.setBrush(QColor(13, 15, 20, 224));
@@ -3837,6 +3854,14 @@ void CaptureEditor::paintEdit(QPainter &painter) {
     }
   }
   drawStatusPill(painter, rect(), status_);
+  QVector<QPointF> keepVisible;
+  if (selectedAnnotation_ >= 0 && selectedAnnotation_ < annotations_.size() &&
+      hasEndpointHandles(annotations_.at(selectedAnnotation_).kind)) {
+    const Annotation &selected = annotations_.at(selectedAnnotation_);
+    const qreal scale = editScale();
+    keepVisible = {image.topLeft() + selected.start * scale,
+                   image.topLeft() + selected.end * scale};
+  }
   drawHotkeyLegend(
       painter, rect(), cursor_,
       {{QStringLiteral("V"), QStringLiteral("Select / move layer")},
@@ -3857,7 +3882,8 @@ void CaptureEditor::paintEdit(QPainter &painter) {
        {QStringLiteral("Enter"), QStringLiteral("Copy + save")},
        {QStringLiteral("Ctrl+C"), QStringLiteral("Copy only")},
        {QStringLiteral("Ctrl+S"), QStringLiteral("Save only")},
-       {QStringLiteral("Esc"), QStringLiteral("Arrow / twice close")}});
+       {QStringLiteral("Esc"), QStringLiteral("Arrow / twice close")}},
+      keepVisible);
   if (hoveredButton) {
     drawInstantTooltip(painter, rect(), hoveredButton->rect,
                        hoveredButton->tooltip);

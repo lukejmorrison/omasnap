@@ -3894,6 +3894,52 @@ bool runLayerHandlesSmoke(QApplication &application, QString &error) {
   return true;
 }
 
+
+/**
+ * Selecting a line near mid-canvas must leave both endpoint handles visible.
+ * The help card flips away from the pointer; after Cut added a row it was
+ * tall enough that this click parked the card on the start handle.
+ */
+bool runLineHandleLegendSmoke(QApplication &application, QString &error) {
+  CaptureData capture;
+  capture.monitor.geometry = {0, 0, 800, 600};
+  capture.monitor.pixelSize = {800, 600};
+  capture.monitor.scale = 1.0;
+  capture.source = QImage(800, 600, QImage::Format_ARGB32_Premultiplied);
+  capture.source.fill(QColor(QStringLiteral("#182030")));
+  capture.previewSize = capture.source.size();
+
+  CaptureEditor editor(capture);
+  editor.setSuppressSnapshots(true);
+  editor.resize(800, 600);
+  editor.show();
+  application.processEvents();
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(100, 100));
+  QTest::mouseMove(&editor, QPoint(650, 470), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(650, 470));
+  application.processEvents();
+  QTest::keyClick(&editor, Qt::Key_L);
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(260, 210));
+  QTest::mouseMove(&editor, QPoint(520, 265), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(520, 265));
+  application.processEvents();
+  QTest::keyClick(&editor, Qt::Key_V);
+  application.processEvents();
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(390, 238));
+  application.processEvents();
+  const QImage ui = editor.grab().toImage();
+  const QColor handle(QStringLiteral("#0a84ff"));
+  if (ui.pixelColor(260, 210) != handle || ui.pixelColor(520, 265) != handle) {
+    error = QStringLiteral(
+        "Selected line start handle %1 end handle %2 (want #0a84ff)")
+                .arg(ui.pixelColor(260, 210).name(QColor::HexArgb),
+                     ui.pixelColor(520, 265).name(QColor::HexArgb));
+    return false;
+  }
+  editor.close();
+  return true;
+}
+
 int main(int argc, char **argv) {
   // Re-executed by the instance-lock checks as the process holding the lock.
   const QString heldLockPath =
@@ -4036,6 +4082,10 @@ int main(int argc, char **argv) {
   if (!runCutToolSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 95;
+  }
+  if (!runLineHandleLegendSmoke(application, snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 89;
   }
   if (!runOpLogSmoke(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
@@ -4308,6 +4358,7 @@ int main(int argc, char **argv) {
   QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(390, 238));
   application.processEvents();
   const QImage lineSelectedUi = editor.grab().toImage();
+  // Handles stay visible even when this click would flip the help card.
   if (lineSelectedUi.pixelColor(260, 210) !=
           QColor(QStringLiteral("#0a84ff")) ||
       lineSelectedUi.pixelColor(520, 265) != QColor(QStringLiteral("#0a84ff")))
