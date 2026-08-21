@@ -1143,6 +1143,8 @@ QString annotationToolName(Annotation::Kind kind) {
     return QStringLiteral("marker");
   case Annotation::Kind::Rectangle:
     return QStringLiteral("rectangle");
+  case Annotation::Kind::Ellipse:
+    return QStringLiteral("ellipse");
   case Annotation::Kind::Text:
     return QStringLiteral("text");
   case Annotation::Kind::Redaction:
@@ -1166,6 +1168,8 @@ bool annotationKindFromName(const QString &name, Annotation::Kind &kind) {
     kind = Annotation::Kind::Marker;
   else if (name == QStringLiteral("rectangle"))
     kind = Annotation::Kind::Rectangle;
+  else if (name == QStringLiteral("ellipse"))
+    kind = Annotation::Kind::Ellipse;
   else if (name == QStringLiteral("text"))
     kind = Annotation::Kind::Text;
   else if (name == QStringLiteral("redaction"))
@@ -1236,6 +1240,12 @@ QJsonObject annotationToJson(const Annotation &annotation) {
     object.insert(QStringLiteral("seed"),
                   QString::number(annotation.redactionSeed));
   }
+  if (annotation.filled)
+    object.insert(QStringLiteral("filled"), true);
+  if (annotation.cornerRadius > 0.0)
+    object.insert(QStringLiteral("cornerRadius"), annotation.cornerRadius);
+  if (annotation.textBackground != TextBackground::Pill)
+    object.insert(QStringLiteral("textBackground"), QStringLiteral("plain"));
   if (annotation.kind == Annotation::Kind::Spotlight) {
     object.insert(QStringLiteral("magnification"), annotation.magnification);
     object.insert(QStringLiteral("spotlightShape"),
@@ -1274,6 +1284,14 @@ bool annotationFromJson(const QJsonObject &object, Annotation &annotation,
                                   : RedactionStyle::Pixelate;
   annotation.redactionSeed =
       object.value(QStringLiteral("seed")).toString().toUInt();
+  annotation.filled = object.value(QStringLiteral("filled")).toBool(false);
+  annotation.cornerRadius =
+      object.value(QStringLiteral("cornerRadius")).toDouble(0.0);
+  annotation.textBackground =
+      object.value(QStringLiteral("textBackground")).toString() ==
+              QStringLiteral("plain")
+          ? TextBackground::Plain
+          : TextBackground::Pill;
   annotation.magnification =
       object.value(QStringLiteral("magnification")).toDouble(2.0);
   const QString spotlightShape =

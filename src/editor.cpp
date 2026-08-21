@@ -1142,14 +1142,13 @@ void CaptureEditor::toggleShapeFill() {
 void CaptureEditor::toggleTextBackground() {
   if (selectedAnnotation_ >= 0 && selectedAnnotation_ < annotations_.size() &&
       annotations_.at(selectedAnnotation_).kind == Annotation::Kind::Text) {
-    recordEdit();
     Annotation &text = annotations_[selectedAnnotation_];
     text.textBackground = text.textBackground == TextBackground::Pill
                               ? TextBackground::Plain
                               : TextBackground::Pill;
     setStatus(QStringLiteral("Selected text: %1 · T again toggles")
                   .arg(textBackgroundName(text.textBackground).toLower()));
-    scheduleSnapshot();
+    commitPatch({selectedAnnotation_});
     return;
   }
   textBackground_ = textBackground_ == TextBackground::Pill
@@ -1751,11 +1750,8 @@ void CaptureEditor::replayLog() {
       background = op.background;
       break;
     case Operation::Type::Annotate:
-      for (const Annotation &annotation : op.annotations) {
+      for (const Annotation &annotation : op.annotations)
         annotations.push_back(annotation);
-        if (annotation.kind == Annotation::Kind::Marker)
-          nextMarker = std::max(nextMarker, annotation.number + 1);
-      }
       break;
     case Operation::Type::Patch:
       for (const Annotation &annotation : op.annotations) {
@@ -1763,11 +1759,8 @@ void CaptureEditor::replayLog() {
             annotations, [&](const Annotation &current) {
               return current.id != 0 && current.id == annotation.id;
             });
-        if (match != annotations.end()) {
+        if (match != annotations.end())
           *match = annotation;
-          if (annotation.kind == Annotation::Kind::Marker)
-            nextMarker = std::max(nextMarker, annotation.number + 1);
-        }
       }
       break;
     case Operation::Type::Delete:
@@ -1814,6 +1807,11 @@ void CaptureEditor::replayLog() {
   }
   if (!selection.isEmpty())
     selection_ = selection;
+  nextMarker = 1;
+  for (const Annotation &annotation : annotations_) {
+    if (annotation.kind == Annotation::Kind::Marker)
+      nextMarker = std::max(nextMarker, annotation.number + 1);
+  }
   nextMarker_ = nextMarker;
   selectedAnnotations_.clear();
   selectedAnnotation_ = -1;
@@ -2470,7 +2468,6 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
     if (!dragging_ && selectedAnnotation_ >= 0 &&
         selectedAnnotation_ < annotations_.size() &&
         annotations_.at(selectedAnnotation_).kind == dragShapeKind(shape)) {
-      recordEdit();
       Annotation &selected = annotations_[selectedAnnotation_];
       selected.filled = !selected.filled;
       setStatus(
@@ -2479,7 +2476,7 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
                              : QStringLiteral("ellipse"))
               .arg(fillName(selected.filled).toLower())
               .arg(rectangle ? QStringLiteral("R") : QStringLiteral("E")));
-      scheduleSnapshot();
+      commitPatch({selectedAnnotation_});
     } else if (tool_ == shape) {
       toggleShapeFill();
     } else {
