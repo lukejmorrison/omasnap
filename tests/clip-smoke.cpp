@@ -2,8 +2,12 @@
 #include "clip-smoke.hpp"
 
 #include "clip.hpp"
+#include "capture.hpp"
 
+#include <QBuffer>
 #include <QColor>
+#include <QDir>
+#include <QFile>
 #include <QImage>
 #include <QRect>
 #include <QRectF>
@@ -86,10 +90,88 @@ bool runClipSmoke(QString &error) {
     error = QStringLiteral("clipDestSnapped threshold wrong");
     return false;
   }
-  if (clipSnapThreshold(2.0) != 4.0) {
-    error = QStringLiteral("clipSnapThreshold scale mapping wrong");
+  if (clipSnapEnterThreshold(2.0) != 7.0 ||
+      clipSnapLeaveThreshold(2.0) != 10.0) {
+    error = QStringLiteral("clip snap hysteresis thresholds wrong");
     return false;
   }
+
+  QImage composed(8, 8, QImage::Format_ARGB32_Premultiplied);
+  composed.fill(QColor(220, 50, 0, 255));
+  QImage existing(3, 3, QImage::Format_ARGB32_Premultiplied);
+  existing.fill(QColor(10, 132, 255, 255));
+  const QImage kept =
+      resolveClipTile(composed, QRect(2, 2, 3, 3), existing, false);
+  if (kept.size() != existing.size() ||
+      kept.pixelColor(1, 1) != QColor(10, 132, 255, 255)) {
+    error = QStringLiteral("resolveClipTile recopied when the tile was present");
+    return false;
+  }
+  const QImage recopied =
+      resolveClipTile(composed, QRect(2, 2, 3, 3), existing, true);
+  if (recopied.pixelColor(0, 0) != QColor(220, 50, 0, 255)) {
+    error = QStringLiteral("resolveClipTile skipped copy when prefix changed");
+    return false;
+  }
+  const QImage missing =
+      resolveClipTile(composed, QRect(2, 2, 3, 3), QImage(), false);
+  if (missing.pixelColor(0, 0) != QColor(220, 50, 0, 255)) {
+    error = QStringLiteral("resolveClipTile skipped copy when the tile was null");
+    return false;
+  }
+
+  QImage pngTile(2, 2, QImage::Format_ARGB32);
+  pngTile.fill(QColor(9, 8, 7, 255));
+  QByteArray pngBytes;
+  QBuffer pngBuffer(&pngBytes);
+  pngBuffer.open(QIODevice::WriteOnly);
+  pngTile.save(&pngBuffer, "PNG");
+  const QString b64 = QString::fromLatin1(pngBytes.toBase64());
+  const QString jsonPath =
+      QDir::temp().filePath(QStringLiteral("omasnap-clip-png-gate.json"));
+  const auto writeLog = [&](const QString &tool) {
+    QFile file(jsonPath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+      return false;
+    const QString json = QStringLiteral(
+        "{\"version\":1,\"index\":1,\"nextId\":\"2\",\"nextMarker\":1,\"ops\":["
+        "{\"type\":\"annotate\",\"annotation\":{\"id\":\"1\",\"tool\":\"%1\","
+        "\"start\":[0,0],\"end\":[4,4],\"color\":\"#ffff0000\",\"size\":4,"
+        "\"png\":\"%2\"}}]}")
+                             .arg(tool, b64);
+    return file.write(json.toUtf8()) > 0;
+  };
+  if (!writeLog(QStringLiteral("rectangle"))) {
+    error = QStringLiteral("could not write rectangle png-gate log");
+    return false;
+  }
+  OperationLog rectangleLog;
+  QString loadError;
+  if (!loadOperationLog(jsonPath, rectangleLog, loadError) ||
+      rectangleLog.ops.isEmpty() ||
+      rectangleLog.ops.constFirst().annotations.isEmpty()) {
+    error = QStringLiteral("rectangle png-gate log failed to load: %1")
+                .arg(loadError);
+    return false;
+  }
+  if (!rectangleLog.ops.constFirst().annotations.constFirst().image.isNull()) {
+    error = QStringLiteral("annotationFromJson loaded png onto a non-Clip kind");
+    return false;
+  }
+  if (!writeLog(QStringLiteral("clip"))) {
+    error = QStringLiteral("could not write clip png-gate log");
+    return false;
+  }
+  OperationLog clipLog;
+  if (!loadOperationLog(jsonPath, clipLog, loadError) ||
+      clipLog.ops.isEmpty() || clipLog.ops.constFirst().annotations.isEmpty() ||
+      clipLog.ops.constFirst().annotations.constFirst().image.isNull() ||
+      clipLog.ops.constFirst().annotations.constFirst().image.pixelColor(0, 0) !=
+          QColor(9, 8, 7, 255)) {
+    error = QStringLiteral("annotationFromJson skipped png on a Clip kind");
+    return false;
+  }
+  QFile::remove(jsonPath);
 
   return true;
 }

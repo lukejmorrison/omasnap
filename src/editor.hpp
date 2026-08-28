@@ -9,6 +9,7 @@
 
 #include <QElapsedTimer>
 #include <QFutureWatcher>
+#include <QHash>
 #include <QPlainTextEdit>
 #include <QPixmap>
 #include <QLineF>
@@ -271,6 +272,10 @@ public:
   /// tile at `dest`. Test hook: no widget drag.
   void applyClipForTest(const QRectF &logicalRect, const QRectF &dest,
                         const QColor &fill = {});
+  /// Overwrite the last Clip op's stored tile, then replay. Test hook for
+  /// "replay keeps a present tile instead of copyRect".
+  void markLastClipTileForTest(const QColor &color);
+  void replayLogForTest() { replayLog(); }
   /// Pixel-marquee awaiting a lift. Test accessor.
   [[nodiscard]] QRectF pixelClipRectForTest() const { return pixelClipRect_; }
   [[nodiscard]] bool clipLiftActiveForTest() const { return clipLiftActive_; }
@@ -557,10 +562,15 @@ private:
   void updateClipLift(const QPointF &point);
   void finishClipLift();
   void cancelClipLift();
+  void rebuildClipLiftPixmap();
+  void punchDisplayCaches(QRect nativeRect, const QColor &fill);
   [[nodiscard]] QRect nativeRectForPixelClip(const QRectF &logical) const;
+  [[nodiscard]] bool pixelClipLargeEnough(const QRectF &logical) const;
   [[nodiscard]] Interaction pixelClipHandleAt(const QPointF &point) const;
   [[nodiscard]] QRectF pixelClipWidgetRect() const;
   [[nodiscard]] QRectF clipFillMenuRect() const;
+  [[nodiscard]] QRect clipLiftRepaintRect() const;
+  void paintClipHolePreview(QPainter &painter, const QRectF &hole) const;
   void setClipFill(const QColor &fill);
   void commitCanvasBoundary(CanvasBoundaryMode mode);
   void cycleCanvasBoundary(bool reverse);
@@ -684,9 +694,17 @@ private:
   QRectF clipLiftDest_;
   QPointF clipLiftGrabOffset_;
   QImage clipLiftTile_;
+  QPixmap clipLiftPixmap_;
+  qreal clipLiftPixmapScale_ = 0.0;
   bool clipLiftSnapped_ = false;
   /// Hole infill for the next clip. Transparent (alpha 0) is the default.
   QColor clipFill_ = QColor(0, 0, 0, 0);
+  /// Hash of Cut+Clip ops in `ops_[0, opIndex_)`. When it matches, replay
+  /// keeps `capture_.source` and the display caches instead of rebuilding.
+  quint64 composedPrefixHash_ = 0;
+  /// Per-clip-id hash of the Cut+Clip prefix *before* that op. A mismatch
+  /// means the tile must be recopied from the composed image.
+  QHash<quint64, quint64> clipTilePrefix_;
   QPointF cutDragStart_;
   CutOp liveCut_;
   qreal cutBandLo_ = 0.0;

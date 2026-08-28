@@ -30,7 +30,7 @@ CaptureData fixtureCapture(const QImage &source) {
 }
 
 QPoint screenOf(const CaptureEditor &editor, qreal ax, qreal ay) {
-  return editor.toScreenPointForTest(QPointF(ax, ay)).toPoint();
+  return editor.annotationPointToWidgetForTest(QPointF(ax, ay)).toPoint();
 }
 
 bool saveGrab(CaptureEditor &editor, const QString &path, QString &error) {
@@ -151,6 +151,22 @@ bool runClipMappingSmoke(QApplication &application, const QString &outputRoot,
       return false;
     }
 
+    const QPoint fidgetFrom = screenOf(editor, 20, 20);
+    const QPoint fidgetTo = screenOf(editor, 22, 21);
+    QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, fidgetFrom);
+    application.processEvents();
+    if (!editor.statusForTest().contains(QStringLiteral("Drag to select layers"))) {
+      error = QStringLiteral("empty marquee status was not Drag to select layers");
+      return false;
+    }
+    QTest::mouseMove(&editor, fidgetTo, 10);
+    QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, fidgetTo);
+    application.processEvents();
+    if (!editor.pixelClipRectForTest().isEmpty()) {
+      error = QStringLiteral("2px fidget armed a pixel clip");
+      return false;
+    }
+
     const QPoint from = screenOf(editor, 10, 48);
     const QPoint to = screenOf(editor, kWidth - 10, 64);
     QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, from);
@@ -160,6 +176,14 @@ bool runClipMappingSmoke(QApplication &application, const QString &outputRoot,
     application.processEvents();
     if (editor.pixelClipRectForTest().isEmpty()) {
       error = QStringLiteral("empty marquee did not lock a pixel clip");
+      return false;
+    }
+    editor.applyClipForTest(QRectF(0, 80, kWidth, kBand),
+                            QRectF(0, 96, kWidth, kBand));
+    application.processEvents();
+    const int priorOps = editor.operationIndex();
+    if (priorOps <= 0) {
+      error = QStringLiteral("prior clip did not land in the log");
       return false;
     }
     if (editor.clipFillMenuRectForTest().isEmpty()) {
@@ -196,6 +220,22 @@ bool runClipMappingSmoke(QApplication &application, const QString &outputRoot,
       error = QStringLiteral("drag inside the pixel clip did not start a lift");
       return false;
     }
+    QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+    application.processEvents();
+    if (editor.clipLiftActiveForTest()) {
+      error = QStringLiteral("Ctrl+Z during a lift did not cancel the lift");
+      return false;
+    }
+    if (editor.operationIndex() != priorOps) {
+      error = QStringLiteral("Ctrl+Z during a lift undid the previous op");
+      return false;
+    }
+    QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, liftFrom);
+    application.processEvents();
+    if (!editor.clipLiftActiveForTest()) {
+      error = QStringLiteral("lift did not restart after key-cancel");
+      return false;
+    }
     QTest::mouseMove(&editor, liftTo, 10);
     application.processEvents();
     if (!saveGrab(editor, outputRoot + QStringLiteral("-clip-lift.png"), error))
@@ -225,6 +265,37 @@ bool runClipMappingSmoke(QApplication &application, const QString &outputRoot,
     if (editor.composedSourceForTest().pixelColor(kWidth / 2, 56).alpha() ==
         0) {
       error = QStringLiteral("widget clip undo left the hole");
+      return false;
+    }
+    editor.close();
+  }
+
+  // Replay keeps a stored clip tile instead of copyRect.
+  {
+    CaptureEditor editor(fixtureCapture(source),
+                         CaptureEditor::CaptureMode::File);
+    editor.resize(800, 600);
+    editor.show();
+    application.processEvents();
+    editor.applyClipForTest(QRectF(0, 48, kWidth, kBand),
+                            QRectF(kWidth + 20, 48, kWidth, kBand));
+    const QColor mark(9, 9, 9, 255);
+    editor.markLastClipTileForTest(mark);
+    editor.replayLogForTest();
+    application.processEvents();
+    bool kept = false;
+    for (const Annotation &annotation : editor.currentAnnotationsForTest()) {
+      if (annotation.kind != Annotation::Kind::Clip)
+        continue;
+      if (annotation.image.isNull() ||
+          annotation.image.pixelColor(0, 0) != mark) {
+        error = QStringLiteral("replay recopied a clip tile that was already present");
+        return false;
+      }
+      kept = true;
+    }
+    if (!kept) {
+      error = QStringLiteral("replay dropped the marked clip tile");
       return false;
     }
     editor.close();

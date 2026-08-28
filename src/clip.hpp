@@ -46,11 +46,26 @@ void fillHole(QImage &image, QRect sourceRect, const QColor &fill);
  *  the Cut tool's band mapping. */
 [[nodiscard]] QRect nativeClipRect(QRectF logical, QSize preview, QSize source);
 
-/** Annotation-space distance at which a lifted clip snaps back into its
- *  hole. `viewScale` is the editor's annotation-to-widget scale. */
-[[nodiscard]] qreal clipSnapThreshold(qreal viewScale);
+/** Annotation-space distance at which a lifted clip *enters* the snap zone
+ *  (~14 widget px). `viewScale` is the editor's annotation-to-widget scale.
+ *  Dest is never clamped to the hole while dragging; snap applies on release. */
+[[nodiscard]] qreal clipSnapEnterThreshold(qreal viewScale);
+
+/** Annotation-space distance at which a lifted clip *leaves* the snap zone
+ *  (~20 widget px). Wider than enter so the snap ghost does not chatter. */
+[[nodiscard]] qreal clipSnapLeaveThreshold(qreal viewScale);
+
+[[nodiscard]] inline qreal clipSnapThreshold(qreal viewScale) {
+  return clipSnapEnterThreshold(viewScale);
+}
 
 /** True when `dest` is close enough to `origin` that releasing should restore
  *  the hole instead of committing a new layer. */
 [[nodiscard]] bool clipDestSnapped(const QRectF &dest, const QRectF &origin,
                                    qreal threshold);
+
+/** Tile for a Clip op. Keep `existing` (from beginClipLift / JSON png / a
+ *  prior commit) unless it is null or the cut/clip prefix before that op
+ *  changed. */
+[[nodiscard]] QImage resolveClipTile(const QImage &composed, QRect sourceRect,
+                                     const QImage &existing, bool prefixChanged);

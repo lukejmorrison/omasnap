@@ -71,12 +71,23 @@ QRect nativeClipRect(QRectF logical, QSize preview, QSize source) {
   return native.intersected(QRect(QPoint(), source));
 }
 
-qreal clipSnapThreshold(qreal viewScale) {
-  return 8.0 / std::max<qreal>(0.001, viewScale);
+qreal clipSnapEnterThreshold(qreal viewScale) {
+  return 14.0 / std::max<qreal>(0.001, viewScale);
+}
+
+qreal clipSnapLeaveThreshold(qreal viewScale) {
+  return 20.0 / std::max<qreal>(0.001, viewScale);
 }
 
 bool clipDestSnapped(const QRectF &dest, const QRectF &origin,
                      qreal threshold) {
   const QPointF delta = dest.center() - origin.center();
   return std::hypot(delta.x(), delta.y()) <= threshold;
+}
+
+QImage resolveClipTile(const QImage &composed, QRect sourceRect,
+                       const QImage &existing, bool prefixChanged) {
+  if (!existing.isNull() && !prefixChanged)
+    return existing;
+  return copyRect(composed, sourceRect);
 }

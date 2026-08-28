@@ -51,9 +51,10 @@ still fully undoable because of how they're kept in the log:
   fills that hole — transparent by default, or a solid colour from the
   selection fly-out — then adds those pixels as a `Annotation::Kind::Clip`
   layer at the drop location. The hole does **not** collapse the image (that
-  is Cut). Replay walks the log from `pristineSource_` and applies cuts and
-  clip fills in order, copying the tile from the composed image as it existed
-  at that op so later cuts cannot rewrite an already-torn piece. Undo a clip
+  is Cut). The torn-off tile is kept on the Clip annotation (and in JSON).
+  Replay applies cuts and clip fills in order and recopies from the composed
+  image only when that tile is missing or the cut/clip prefix before the op
+  changed, so later cuts cannot rewrite an already-torn piece. Undo a clip
   and both the hole and the layer disappear together. Live drag is editor-only
   preview; the log is touched only on release. The fill is stored on the Clip
   op (`fill` as HexArgb; omitted when transparent).

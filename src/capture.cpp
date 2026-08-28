@@ -431,7 +431,10 @@ void drawAnnotation(QPainter &painter, const Annotation &annotation) {
         QRectF(annotation.start, annotation.end).normalized();
     if (bounds.width() < 1.0 || bounds.height() < 1.0)
       return;
+    painter.save();
+    painter.setRenderHint(QPainter::SmoothPixmapTransform, false);
     painter.drawImage(bounds, annotation.image);
+    painter.restore();
     return;
   }
 
@@ -1791,10 +1794,12 @@ bool annotationFromJson(const QJsonObject &object, Annotation &annotation,
           : spotlightShape == QStringLiteral("rounded")
                 ? SpotlightShape::RoundedRectangle
                 : SpotlightShape::Ellipse;
-  const QByteArray png = QByteArray::fromBase64(
-      object.value(QStringLiteral("png")).toString().toLatin1());
-  if (!png.isEmpty())
-    annotation.image.loadFromData(png, "PNG");
+  if (annotation.kind == Annotation::Kind::Clip) {
+    const QByteArray png = QByteArray::fromBase64(
+        object.value(QStringLiteral("png")).toString().toLatin1());
+    if (!png.isEmpty())
+      annotation.image.loadFromData(png, "PNG");
+  }
   return true;
 }
 
