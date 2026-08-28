@@ -38,7 +38,8 @@ resizable vector layers and preserves the monitor's native pixels on scaled disp
 - Cut tool: drag across a band of the image to remove it and collapse the gap, with a
   live preview and dashed seam marker while dragging; annotations shift to follow.
 - Clip-out: in Select, an empty marquee on the screenshot locks a pixel region;
-  drag it to lift those pixels as a layer and leave a hole (backdrop shows through).
+  a fly-out next to it picks the hole infill (transparent by default, or any
+  palette / custom colour). Drag the rect to lift those pixels as a layer.
   Release near the hole to snap back; release elsewhere to commit. Repeat to pull
   another region. Ctrl+Z undoes the clip. Distinct from Cut, which collapses a band.
 - Pin a finished capture as a bottom-right always-on-top layer surface, launched
@@ -354,7 +355,7 @@ without reaching for the pointer.
 
 | Input | Action |
 |---|---|
-| `V` | Select/move/resize layers; carrying one past the source grows the canvas; drag empty canvas for a marquee; a marquee that hits no layers locks a pixel clip — drag inside to lift it out as a new layer (repeat); multi-select outlines each layer without treating the canvas as one layer; wheel scales the selected layer |
+| `V` | Select/move/resize layers; carrying one past the source grows the canvas; drag empty canvas for a marquee; a marquee that hits no layers locks a pixel clip with a hole-fill fly-out (transparent default, 1–8 / eyedropper / custom for colour) — drag inside to lift it out as a new layer (repeat); multi-select outlines each layer without treating the canvas as one layer; wheel scales the selected layer |
 | `A` | Arrow |
 | `S` | Spotlight/loupe; press again to cycle ellipse, rectangle, rounded |
 | `L` | Straight line |

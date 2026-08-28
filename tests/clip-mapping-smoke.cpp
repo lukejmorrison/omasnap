@@ -7,6 +7,7 @@
 #include "clip-mapping-smoke.hpp"
 
 #include "capture.hpp"
+#include "clip.hpp"
 #include "editor.hpp"
 #include "image-fixture.hpp"
 
@@ -113,6 +114,26 @@ bool runClipMappingSmoke(QApplication &application, const QString &outputRoot,
     editor.close();
   }
 
+  // Solid hole fill is stored on the Clip op and replayed.
+  {
+    CaptureEditor editor(fixtureCapture(source),
+                         CaptureEditor::CaptureMode::File);
+    editor.resize(800, 600);
+    editor.show();
+    application.processEvents();
+    const QColor infill(10, 132, 255, 255);
+    editor.applyClipForTest(QRectF(0, 48, kWidth, kBand),
+                            QRectF(kWidth + 20, 48, kWidth, kBand), infill);
+    application.processEvents();
+    const QColor hole = editor.composedSourceForTest().pixelColor(80, 56);
+    if (hole.red() != infill.red() || hole.green() != infill.green() ||
+        hole.blue() != infill.blue() || hole.alpha() == 0) {
+      error = QStringLiteral("solid clip fill did not land in the hole");
+      return false;
+    }
+    editor.close();
+  }
+
   // Empty Select marquee on a source with no layers becomes a pixel clip;
   // dragging that rect lifts and commits.
   {
@@ -139,6 +160,28 @@ bool runClipMappingSmoke(QApplication &application, const QString &outputRoot,
     application.processEvents();
     if (editor.pixelClipRectForTest().isEmpty()) {
       error = QStringLiteral("empty marquee did not lock a pixel clip");
+      return false;
+    }
+    if (editor.clipFillMenuRectForTest().isEmpty()) {
+      error = QStringLiteral("pixel clip did not show a hole-fill fly-out");
+      return false;
+    }
+    if (clipFillOpaque(editor.clipFillForTest())) {
+      error = QStringLiteral("hole fill was not transparent by default");
+      return false;
+    }
+    QTest::keyClick(&editor, Qt::Key_1);
+    application.processEvents();
+    if (!clipFillOpaque(editor.clipFillForTest())) {
+      error = QStringLiteral("1 did not set a solid hole fill");
+      return false;
+    }
+    const QRectF fillMenu = editor.clipFillMenuRectForTest();
+    QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
+                      fillMenu.topLeft().toPoint() + QPoint(16, 18));
+    application.processEvents();
+    if (clipFillOpaque(editor.clipFillForTest())) {
+      error = QStringLiteral("transparent swatch did not clear the hole fill");
       return false;
     }
     if (!saveGrab(editor, outputRoot + QStringLiteral("-clip-marquee.png"),

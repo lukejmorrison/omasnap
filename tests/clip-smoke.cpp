@@ -37,6 +37,23 @@ bool runClipSmoke(QString &error) {
     return false;
   }
 
+  QImage filled = source;
+  fillHole(filled, region, QColor(10, 132, 255, 255));
+  if (filled.pixelColor(2, 3) != QColor(10, 132, 255, 255)) {
+    error = QStringLiteral("fillHole did not paint the solid infill");
+    return false;
+  }
+  if (filled.pixelColor(0, 0) != QColor(40, 180, 60, 255)) {
+    error = QStringLiteral("fillHole touched pixels outside the rect");
+    return false;
+  }
+  QImage viaTransparent = source;
+  fillHole(viaTransparent, region, QColor(0, 0, 0, 0));
+  if (viaTransparent.pixelColor(2, 3).alpha() != 0) {
+    error = QStringLiteral("fillHole with alpha 0 did not punch");
+    return false;
+  }
+
   // Empty / out-of-bounds are no-ops.
   if (!copyRect(source, QRect(20, 20, 2, 2)).isNull()) {
     error = QStringLiteral("copyRect of a miss should be null");

@@ -1856,6 +1856,9 @@ QJsonObject operationToJson(const Operation &operation) {
                              operation.clip.sourceRect.y(),
                              operation.clip.sourceRect.width(),
                              operation.clip.sourceRect.height()});
+    if (clipFillOpaque(operation.clip.fill))
+      object.insert(QStringLiteral("fill"),
+                    operation.clip.fill.name(QColor::HexArgb));
     if (!operation.annotations.isEmpty())
       object.insert(QStringLiteral("annotation"),
                     annotationToJson(operation.annotations.constFirst()));
@@ -1939,6 +1942,9 @@ bool operationFromJson(const QJsonObject &object, Operation &operation,
     operation.type = Operation::Type::Clip;
     const QRectF source = rectFromArray(object.value(QStringLiteral("sourceRect")));
     operation.clip.sourceRect = source.toRect();
+    const QString fill = object.value(QStringLiteral("fill")).toString();
+    if (!fill.isEmpty())
+      operation.clip.fill = QColor(fill);
     if (object.contains(QStringLiteral("annotation"))) {
       Annotation annotation;
       if (!annotationFromJson(

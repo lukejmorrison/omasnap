@@ -271,6 +271,23 @@ bool isBoxResize(CaptureEditor::Interaction interaction) {
          interaction <= CaptureEditor::Interaction::ResizeLeft;
 }
 
+void paintCheckerboard(QPainter &painter, const QRectF &bounds, qreal cell) {
+  painter.fillRect(bounds, QColor(245, 245, 247));
+  painter.setPen(Qt::NoPen);
+  painter.setBrush(QColor(170, 172, 178));
+  const int columns = std::max(1, static_cast<int>(std::ceil(bounds.width() / cell)));
+  const int rows = std::max(1, static_cast<int>(std::ceil(bounds.height() / cell)));
+  for (int row = 0; row < rows; ++row) {
+    for (int column = 0; column < columns; ++column) {
+      if (((row + column) & 1) == 0)
+        continue;
+      painter.fillRect(QRectF(bounds.left() + column * cell,
+                              bounds.top() + row * cell, cell, cell),
+                       QColor(170, 172, 178));
+    }
+  }
+}
+
 /// How far from an edge a press still counts as grabbing it: wide enough to
 /// hit without aiming, since some layers are grabbable only by their border.
 constexpr qreal kEdgeGrabTolerance = 12.0;
@@ -1254,8 +1271,8 @@ QString CaptureEditor::toolStatus() const {
   switch (tool_) {
   case Tool::Select:
     return QStringLiteral(
-        "Select · empty marquee clips pixels · drag inside to lift · "
-        "Ctrl+wheel zooms · outer handles crop");
+        "Select · empty marquee clips pixels · pick a hole fill · "
+        "drag inside to lift · Ctrl+wheel zooms · outer handles crop");
   case Tool::Spotlight: {
     const QString shape =
         spotlightShape_ == SpotlightShape::Ellipse ? QStringLiteral("ellipse")
@@ -1773,6 +1790,8 @@ void CaptureEditor::applyCustomColor(const QPointF &position) {
   }
   customColor_ = QColor::fromHsvF(customHue_, saturation, value);
   usingCustomColor_ = true;
+  if (!pixelClipRect_.isEmpty() && !clipLiftActive_)
+    setClipFill(customColor_);
   if (selectedAnnotation_ >= 0 && selectedAnnotation_ < annotations_.size() &&
       annotations_.at(selectedAnnotation_).kind !=
           Annotation::Kind::Redaction) {
@@ -2279,6 +2298,27 @@ CaptureEditor::toolbarButtons(QVector<qreal> *groupDividers,
                        QStringLiteral("tool-eyedropper"), {},
                        QStringLiteral("Sample from image · I"), {}});
   }
+  if (includeSubmenus && !pixelClipRect_.isEmpty() && !clipLiftActive_) {
+    const QRectF menu = clipFillMenuRect();
+    if (!menu.isEmpty()) {
+      buttons.push_back({{menu.left() + 4, menu.top() + 4, 24, 28},
+                         QStringLiteral("clip-fill-transparent"), {},
+                         QStringLiteral("Hole fill · transparent"), {}});
+      const int presetCount = static_cast<int>(paletteConfig_.palette.size());
+      for (int index = 0; index < presetCount; ++index) {
+        buttons.push_back(
+            {{menu.left() + 4 + (index + 1) * 28, menu.top() + 4, 24, 28},
+             QStringLiteral("clip-fill-%1").arg(index),
+             {},
+             QStringLiteral("Hole fill · %1").arg(index + 1),
+             paletteConfig_.palette.at(static_cast<std::size_t>(index))});
+      }
+      buttons.push_back(
+          {{menu.left() + 4 + (presetCount + 1) * 28, menu.top() + 4, 24, 28},
+           QStringLiteral("clip-fill-custom"), {},
+           QStringLiteral("Hole fill · custom color"), {}});
+    }
+  }
   return buttons;
 }
 
@@ -2493,7 +2533,7 @@ void CaptureEditor::commitClip(ClipOp clip, Annotation annotation) {
 }
 
 void CaptureEditor::applyClipForTest(const QRectF &logicalRect,
-                                     const QRectF &dest) {
+                                     const QRectF &dest, const QColor &fill) {
   const QRect native = nativeRectForPixelClip(logicalRect);
   if (native.isEmpty())
     return;
@@ -2501,13 +2541,14 @@ void CaptureEditor::applyClipForTest(const QRectF &logicalRect,
   annotation.kind = Annotation::Kind::Clip;
   annotation.start = dest.topLeft();
   annotation.end = dest.bottomRight();
-  commitClip(ClipOp{native}, std::move(annotation));
+  commitClip(ClipOp{native, fill}, std::move(annotation));
 }
 
 void CaptureEditor::clearPixelClip() {
   pixelClipRect_ = {};
   originalPixelClip_ = {};
   pixelClipResizing_ = false;
+  clipFill_ = QColor(0, 0, 0, 0);
   cancelClipLift();
 }
 
@@ -2542,6 +2583,44 @@ CaptureEditor::pixelClipHandleAt(const QPointF &point) const {
       return handle;
   }
   return Interaction::None;
+}
+
+QRectF CaptureEditor::pixelClipWidgetRect() const {
+  if (pixelClipRect_.isEmpty())
+    return {};
+  const qreal scale = std::max<qreal>(editScale(), 0.01);
+  return QRectF(sourceFrameWidgetRect().topLeft() +
+                    pixelClipRect_.topLeft() * scale,
+                pixelClipRect_.size() * scale);
+}
+
+QRectF CaptureEditor::clipFillMenuRect() const {
+  if (pixelClipRect_.isEmpty() || clipLiftActive_)
+    return {};
+  const int swatches =
+      static_cast<int>(paletteConfig_.palette.size()) + 2; // transparent + custom
+  const qreal menuWidth = 8.0 + swatches * 28.0;
+  const QRectF clip = pixelClipWidgetRect();
+  QRectF menu(clip.center().x() - menuWidth / 2.0, clip.bottom() + 8.0,
+              menuWidth, 36.0);
+  if (menu.bottom() > height() - 8.0)
+    menu.moveBottom(clip.top() - 8.0);
+  if (menu.left() < 8.0)
+    menu.moveLeft(8.0);
+  if (menu.right() > this->width() - 8.0)
+    menu.moveRight(this->width() - 8.0);
+  return menu;
+}
+
+void CaptureEditor::setClipFill(const QColor &fill) {
+  clipFill_ = fill.isValid() ? fill : QColor(0, 0, 0, 0);
+  if (clipFillOpaque(clipFill_))
+    setStatus(QStringLiteral("Hole fill %1 · drag inside to clip out")
+                  .arg(clipFill_.name(QColor::HexRgb).toUpper()));
+  else
+    setStatus(QStringLiteral(
+        "Hole fill transparent · drag inside to clip out · Esc cancels"));
+  update();
 }
 
 void CaptureEditor::beginClipLift(const QPointF &point) {
@@ -2593,7 +2672,7 @@ void CaptureEditor::finishClipLift() {
   cancelClipLift();
   pixelClipRect_ = {};
   dragging_ = false;
-  commitClip(ClipOp{native}, std::move(annotation));
+  commitClip(ClipOp{native, clipFill_}, std::move(annotation));
   selectedAnnotation_ = annotations_.isEmpty()
                             ? -1
                             : static_cast<int>(annotations_.size()) - 1;
@@ -2831,7 +2910,7 @@ void CaptureEditor::replayLog() {
     }
     case Operation::Type::Clip: {
       QImage tile = copyRect(composed, op.clip.sourceRect);
-      punchRect(composed, op.clip.sourceRect);
+      fillHole(composed, op.clip.sourceRect, op.clip.fill);
       Annotation layer;
       if (!op.annotations.isEmpty())
         layer = op.annotations.constFirst();
@@ -3704,7 +3783,27 @@ void CaptureEditor::handleToolbar(const QString &action) {
   }
   else if (action == QStringLiteral("palette"))
     colorPaletteOpen_ = true;
-  else if (action.startsWith(QStringLiteral("color-"))) {
+  else if (action == QStringLiteral("clip-fill-transparent")) {
+    setClipFill(QColor(0, 0, 0, 0));
+    return;
+  } else if (action.startsWith(QStringLiteral("clip-fill-"))) {
+    const QString rest = action.sliced(10);
+    if (rest == QStringLiteral("custom")) {
+      usingCustomColor_ = true;
+      customColorPickerOpen_ = !customColorPickerOpen_;
+      if (clipFillOpaque(customColor_))
+        setClipFill(customColor_);
+      else
+        update();
+      return;
+    }
+    const int index = std::clamp(
+        rest.toInt(), 0, static_cast<int>(paletteConfig_.palette.size()) - 1);
+    usingCustomColor_ = false;
+    customColorPickerOpen_ = false;
+    setClipFill(paletteConfig_.palette.at(static_cast<std::size_t>(index)));
+    return;
+  } else if (action.startsWith(QStringLiteral("color-"))) {
     colorIndex_ = std::clamp(action.sliced(6).toInt(), 0,
                              static_cast<int>(paletteConfig_.palette.size()) - 1);
     usingCustomColor_ = false;
@@ -4086,9 +4185,12 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
   } else if (event->key() >= Qt::Key_1 && event->key() <= Qt::Key_8) {
     colorIndex_ = event->key() - Qt::Key_1;
     usingCustomColor_ = false;
-    if (selectedAnnotation_ >= 0 && selectedAnnotation_ < annotations_.size() &&
-        annotations_.at(selectedAnnotation_).kind !=
-            Annotation::Kind::Redaction) {
+    if (!pixelClipRect_.isEmpty() && !clipLiftActive_) {
+      setClipFill(annotationColor());
+    } else if (selectedAnnotation_ >= 0 &&
+               selectedAnnotation_ < annotations_.size() &&
+               annotations_.at(selectedAnnotation_).kind !=
+                   Annotation::Kind::Redaction) {
       annotations_[selectedAnnotation_].color = annotationColor();
       commitPatch({selectedAnnotation_});
     }
@@ -4602,6 +4704,8 @@ void CaptureEditor::mousePressEvent(QMouseEvent *event) {
     usingCustomColor_ = true;
     if (customColor_.hsvHueF() >= 0)
       customHue_ = customColor_.hsvHueF();
+    if (!pixelClipRect_.isEmpty() && !clipLiftActive_)
+      setClipFill(customColor_);
     if (selectedAnnotation_ >= 0 && selectedAnnotation_ < annotations_.size() &&
         annotations_.at(selectedAnnotation_).kind !=
             Annotation::Kind::Redaction &&
@@ -4941,10 +5045,12 @@ void CaptureEditor::mouseReleaseEvent(QMouseEvent *event) {
         if (clipped.width() >= 2.0 && clipped.height() >= 2.0 &&
             !nativeRectForPixelClip(clipped).isEmpty()) {
           pixelClipRect_ = clipped;
+          clipFill_ = QColor(0, 0, 0, 0);
           selectedAnnotations_.clear();
           selectedAnnotation_ = -1;
           setStatus(QStringLiteral(
-              "Selection ready — drag inside to clip out · Esc cancels"));
+              "Selection ready — pick a hole fill or drag inside to clip out · "
+              "Esc cancels"));
           updatePointerCursor();
           update();
           return;
@@ -5317,7 +5423,8 @@ void CaptureEditor::updatePointerCursor() {
   }
   if ((colorPaletteOpen_ && colorPaletteRect().contains(cursor_)) ||
       (customColorPickerOpen_ && customColorPanelRect().contains(cursor_)) ||
-      (shapeMenuOpen_ && shapeMenuRect().contains(cursor_))) {
+      (shapeMenuOpen_ && shapeMenuRect().contains(cursor_)) ||
+      clipFillMenuRect().contains(cursor_)) {
     setCursor(Qt::PointingHandCursor);
     return;
   }
@@ -5408,7 +5515,7 @@ void CaptureEditor::refreshComposedCapture() {
       composed = removeBand(composed, op.cut.orientation, op.cut.sourceStart,
                             op.cut.sourceEnd);
     else if (op.type == Operation::Type::Clip)
-      punchRect(composed, op.clip.sourceRect);
+      fillHole(composed, op.clip.sourceRect, op.clip.fill);
   }
   capture_.source = std::move(composed);
   capture_.previewSize = composedLogicalSize(pristineLogicalSize_, cuts_);
@@ -6211,7 +6318,9 @@ void CaptureEditor::paintEdit(QPainter &painter) {
         clipLiftOrigin_.size() * scale);
     painter.save();
     painter.setClipRect(hole, Qt::IntersectClip);
-    if (hasBackground) {
+    if (clipFillOpaque(clipFill_)) {
+      painter.fillRect(hole, clipFill_);
+    } else if (hasBackground) {
       const QRectF backing =
           grown ? image
                 : (framedBackground ? image.adjusted(-28, -28, 28, 28)
@@ -6406,10 +6515,19 @@ void CaptureEditor::paintEdit(QPainter &painter) {
   if (tool_ == Tool::Select && !pixelClipRect_.isEmpty() &&
       !clipLiftActive_) {
     const qreal scale = std::max<qreal>(editScale(), 0.01);
+    const QRectF locked = pixelClipRect_.normalized();
+    if (clipFillOpaque(clipFill_)) {
+      QColor overlay = clipFill_;
+      overlay.setAlpha(std::min(200, overlay.alpha()));
+      painter.setPen(Qt::NoPen);
+      painter.setBrush(overlay);
+      painter.drawRect(locked);
+    }
     painter.setPen(
         QPen(QColor(QStringLiteral("#ffd60a")), 2.0 / scale, Qt::DashLine));
-    painter.setBrush(QColor(255, 214, 10, 40));
-    painter.drawRect(pixelClipRect_.normalized());
+    painter.setBrush(clipFillOpaque(clipFill_) ? Qt::NoBrush
+                                              : QColor(255, 214, 10, 40));
+    painter.drawRect(locked);
     painter.setPen(QPen(Qt::white, 1.0 / scale));
     painter.setBrush(QColor(QStringLiteral("#0a84ff")));
     const qreal radius = 5.0 / scale;
@@ -6550,6 +6668,11 @@ void CaptureEditor::paintEdit(QPainter &painter) {
     painter.setBrush(QColor(22, 22, 28, 248));
     painter.drawRoundedRect(colorPaletteRect(), 9, 9);
   }
+  if (const QRectF clipFillMenu = clipFillMenuRect(); !clipFillMenu.isEmpty()) {
+    painter.setPen(QPen(QColor(255, 255, 255, 34), 1));
+    painter.setBrush(QColor(22, 22, 28, 248));
+    painter.drawRoundedRect(clipFillMenu, 9, 9);
+  }
   if (customColorPickerOpen_) {
     const QRectF panel = customColorPanelRect();
     const QRectF field = panel.adjusted(12, 12, -36, -12);
@@ -6654,7 +6777,17 @@ void CaptureEditor::paintEdit(QPainter &painter) {
         (button.action == QStringLiteral("custom-color") &&
          usingCustomColor_) ||
         (!usingCustomColor_ &&
-         button.action == QStringLiteral("color-%1").arg(colorIndex_));
+         button.action == QStringLiteral("color-%1").arg(colorIndex_)) ||
+        (button.action == QStringLiteral("clip-fill-transparent") &&
+         !clipFillOpaque(clipFill_)) ||
+        (button.action == QStringLiteral("clip-fill-custom") &&
+         clipFillOpaque(clipFill_) && usingCustomColor_ &&
+         clipFill_ == customColor_) ||
+        (button.action.startsWith(QStringLiteral("clip-fill-")) &&
+         button.action != QStringLiteral("clip-fill-transparent") &&
+         button.action != QStringLiteral("clip-fill-custom") &&
+         clipFillOpaque(clipFill_) && button.color.isValid() &&
+         button.color.rgb() == clipFill_.rgb());
     const bool hovered = button.rect.contains(cursor_);
     if (hovered)
       hoveredButton = &button;
@@ -6665,7 +6798,20 @@ void CaptureEditor::paintEdit(QPainter &painter) {
     if (button.action == QStringLiteral("both"))
       painter.setBrush(QColor(QStringLiteral("#0a84ff")));
     painter.drawRoundedRect(button.rect, 8, 8);
-    if (button.color.isValid()) {
+    if (button.action == QStringLiteral("clip-fill-transparent")) {
+      const QPointF center = button.rect.center();
+      const QRectF swatch(center.x() - 7, center.y() - 7, 14, 14);
+      painter.setPen(QPen(selected ? Qt::white : QColor(255, 255, 255, 80),
+                          selected ? 2 : 1));
+      painter.setBrush(Qt::NoBrush);
+      painter.save();
+      QPainterPath clip;
+      clip.addEllipse(swatch);
+      painter.setClipPath(clip);
+      paintCheckerboard(painter, swatch, 3.5);
+      painter.restore();
+      painter.drawEllipse(swatch.center(), 7, 7);
+    } else if (button.color.isValid()) {
       const QPointF center = button.rect.center();
       painter.setPen(QPen(selected ? Qt::white : QColor(255, 255, 255, 80),
                           selected ? 2 : 1));

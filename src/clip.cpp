@@ -1,6 +1,7 @@
 /** @fileoverview Rectangular clip-out engine: copy a region and punch a hole. */
 #include "clip.hpp"
 
+#include <QColor>
 #include <QImage>
 #include <QPainter>
 #include <QPointF>
@@ -32,6 +33,24 @@ void punchRect(QImage &image, QRect sourceRect) {
   QPainter painter(&image);
   painter.setCompositionMode(QPainter::CompositionMode_Clear);
   painter.fillRect(sourceRect, Qt::transparent);
+}
+
+void fillHole(QImage &image, QRect sourceRect, const QColor &fill) {
+  if (!clipFillOpaque(fill)) {
+    punchRect(image, sourceRect);
+    return;
+  }
+  if (image.isNull())
+    return;
+  sourceRect = sourceRect.intersected(image.rect());
+  if (sourceRect.isEmpty())
+    return;
+  if (image.format() != QImage::Format_ARGB32 &&
+      image.format() != QImage::Format_ARGB32_Premultiplied)
+    image = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+  QPainter painter(&image);
+  painter.setCompositionMode(QPainter::CompositionMode_Source);
+  painter.fillRect(sourceRect, fill);
 }
 
 QRect nativeClipRect(QRectF logical, QSize preview, QSize source) {

@@ -269,10 +269,15 @@ public:
   void applyCutForTest(CutOp cut) { commitCut(std::move(cut)); }
   /// Clip `logicalRect` (annotation space) out of the source and place the
   /// tile at `dest`. Test hook: no widget drag.
-  void applyClipForTest(const QRectF &logicalRect, const QRectF &dest);
+  void applyClipForTest(const QRectF &logicalRect, const QRectF &dest,
+                        const QColor &fill = {});
   /// Pixel-marquee awaiting a lift. Test accessor.
   [[nodiscard]] QRectF pixelClipRectForTest() const { return pixelClipRect_; }
   [[nodiscard]] bool clipLiftActiveForTest() const { return clipLiftActive_; }
+  [[nodiscard]] QColor clipFillForTest() const { return clipFill_; }
+  [[nodiscard]] QRectF clipFillMenuRectForTest() const {
+    return clipFillMenuRect();
+  }
   [[nodiscard]] QImage composedSourceForTest() const { return capture_.source; }
   /// Number of selected layers. Test accessor.
   [[nodiscard]] int selectedCountForTest() const {
@@ -554,6 +559,9 @@ private:
   void cancelClipLift();
   [[nodiscard]] QRect nativeRectForPixelClip(const QRectF &logical) const;
   [[nodiscard]] Interaction pixelClipHandleAt(const QPointF &point) const;
+  [[nodiscard]] QRectF pixelClipWidgetRect() const;
+  [[nodiscard]] QRectF clipFillMenuRect() const;
+  void setClipFill(const QColor &fill);
   void commitCanvasBoundary(CanvasBoundaryMode mode);
   void cycleCanvasBoundary(bool reverse);
   void cycleBackground();
@@ -677,6 +685,8 @@ private:
   QPointF clipLiftGrabOffset_;
   QImage clipLiftTile_;
   bool clipLiftSnapped_ = false;
+  /// Hole infill for the next clip. Transparent (alpha 0) is the default.
+  QColor clipFill_ = QColor(0, 0, 0, 0);
   QPointF cutDragStart_;
   CutOp liveCut_;
   qreal cutBandLo_ = 0.0;
