@@ -5,7 +5,7 @@
 The image on screen while editing is not the working state — the operation
 log (`ops_` in `CaptureEditor`, an ordered `QVector<Operation>` with an
 `opIndex_` cursor) is. Every action that changes the picture — a crop, a
-background choice, adding/patching/deleting an annotation, a cut — appends
+background choice, adding/patching/deleting an annotation, a cut, a clip — appends
 one `Operation`. Undo moves `opIndex_` back; redo moves it forward.
 `CaptureEditor::replayLog()` rebuilds the entire visible state (selection,
 background, annotation list, cuts) by replaying the log from empty up to
@@ -47,6 +47,15 @@ still fully undoable because of how they're kept in the log:
   original plus the list of cut ops every time the list changes
   (`CaptureEditor::refreshComposedCapture()`). Undo a cut and the composed
   image is rebuilt without it; `pristineSource_` was never modified.
+- **Clip** (`Operation::Type::Clip`) copies a rectangle of native pixels and
+  punches a transparent hole of the same size, then adds those pixels as a
+  `Annotation::Kind::Clip` layer at the drop location. The hole does **not**
+  collapse the image (that is Cut). Replay walks the log from `pristineSource_`
+  and applies cuts and clip punches in order, copying the tile from the
+  composed image as it existed at that op so later cuts cannot rewrite an
+  already-torn piece. Undo a clip and both the hole and the layer disappear
+  together. Live drag is editor-only preview; the log is touched only on
+  release.
 - **Redaction** exists to permanently destroy sensitive content, so it is
   the one place where "non-destructive until export" would be a bug, not a
   feature: `renderCapture` applies redactions to the cropped pixels

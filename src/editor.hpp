@@ -267,6 +267,13 @@ public:
   /// Apply a cut as if the user had dragged that band. Test hook: operate on
   /// a fixture raster without going through widget coordinates.
   void applyCutForTest(CutOp cut) { commitCut(std::move(cut)); }
+  /// Clip `logicalRect` (annotation space) out of the source and place the
+  /// tile at `dest`. Test hook: no widget drag.
+  void applyClipForTest(const QRectF &logicalRect, const QRectF &dest);
+  /// Pixel-marquee awaiting a lift. Test accessor.
+  [[nodiscard]] QRectF pixelClipRectForTest() const { return pixelClipRect_; }
+  [[nodiscard]] bool clipLiftActiveForTest() const { return clipLiftActive_; }
+  [[nodiscard]] QImage composedSourceForTest() const { return capture_.source; }
   /// Number of selected layers. Test accessor.
   [[nodiscard]] int selectedCountForTest() const {
     return static_cast<int>(selectedAnnotations_.size());
@@ -538,7 +545,15 @@ private:
   void commitDelete(const QVector<int> &indices);
   void commitCrop(const QRectF &crop);
   void commitCut(CutOp cut);
+  void commitClip(ClipOp clip, Annotation annotation);
   void commitBackground(BackgroundStyle style, bool imageShadow);
+  void clearPixelClip();
+  void beginClipLift(const QPointF &point);
+  void updateClipLift(const QPointF &point);
+  void finishClipLift();
+  void cancelClipLift();
+  [[nodiscard]] QRect nativeRectForPixelClip(const QRectF &logical) const;
+  [[nodiscard]] Interaction pixelClipHandleAt(const QPointF &point) const;
   void commitCanvasBoundary(CanvasBoundaryMode mode);
   void cycleCanvasBoundary(bool reverse);
   void cycleBackground();
@@ -651,6 +666,17 @@ private:
   // px); the source stays untouched while a shaded removal band previews the
   // drag, and the cut is applied only when the pointer is released.
   bool cutDragActive_ = false;
+  /// Select-tool pixel clip: empty-canvas marquee that hit no layers becomes
+  /// a locked rect on the source. Dragging it lifts a clip layer.
+  QRectF pixelClipRect_;
+  QRectF originalPixelClip_;
+  bool pixelClipResizing_ = false;
+  bool clipLiftActive_ = false;
+  QRectF clipLiftOrigin_;
+  QRectF clipLiftDest_;
+  QPointF clipLiftGrabOffset_;
+  QImage clipLiftTile_;
+  bool clipLiftSnapped_ = false;
   QPointF cutDragStart_;
   CutOp liveCut_;
   qreal cutBandLo_ = 0.0;
