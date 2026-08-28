@@ -1861,6 +1861,16 @@ QJsonObject operationToJson(const Operation &operation) {
                              operation.clip.sourceRect.y(),
                              operation.clip.sourceRect.width(),
                              operation.clip.sourceRect.height()});
+    if (operation.clip.shape != ClipShape::Rect)
+      object.insert(QStringLiteral("shape"),
+                    clipShapeName(operation.clip.shape));
+    if (operation.clip.shape == ClipShape::Lasso &&
+        !operation.clip.points.isEmpty()) {
+      QJsonArray points;
+      for (const QPointF &point : operation.clip.points)
+        points.push_back(QJsonArray{point.x(), point.y()});
+      object.insert(QStringLiteral("points"), points);
+    }
     if (clipFillOpaque(operation.clip.fill))
       object.insert(QStringLiteral("fill"),
                     operation.clip.fill.name(QColor::HexArgb));
@@ -1947,6 +1957,18 @@ bool operationFromJson(const QJsonObject &object, Operation &operation,
     operation.type = Operation::Type::Clip;
     const QRectF source = rectFromArray(object.value(QStringLiteral("sourceRect")));
     operation.clip.sourceRect = source.toRect();
+    if (!clipShapeFromName(object.value(QStringLiteral("shape")).toString(),
+                           operation.clip.shape)) {
+      error = QStringLiteral("Operation log has an unknown clip shape");
+      return false;
+    }
+    for (const QJsonValue value :
+         object.value(QStringLiteral("points")).toArray()) {
+      const QJsonArray pair = value.toArray();
+      if (pair.size() >= 2)
+        operation.clip.points.push_back(
+            QPointF(pair.at(0).toDouble(), pair.at(1).toDouble()));
+    }
     const QString fill = object.value(QStringLiteral("fill")).toString();
     if (!fill.isEmpty())
       operation.clip.fill = QColor(fill);

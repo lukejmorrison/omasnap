@@ -152,6 +152,7 @@ public:
     Ocr,
     Eyedropper
   };
+  enum class PixelClipShape { Rect, Ellipse, Lasso, Snap };
 
 private:
   enum class Phase { Select, Export, Edit };
@@ -278,6 +279,9 @@ public:
   void replayLogForTest() { replayLog(); }
   /// Pixel-marquee awaiting a lift. Test accessor.
   [[nodiscard]] QRectF pixelClipRectForTest() const { return pixelClipRect_; }
+  [[nodiscard]] PixelClipShape pixelClipShapeForTest() const {
+    return pixelClipShape_;
+  }
   [[nodiscard]] bool clipLiftActiveForTest() const { return clipLiftActive_; }
   [[nodiscard]] QColor clipFillForTest() const { return clipFill_; }
   [[nodiscard]] QRectF clipFillMenuRectForTest() const {
@@ -558,6 +562,11 @@ private:
   void commitClip(ClipOp clip, Annotation annotation);
   void commitBackground(BackgroundStyle style, bool imageShadow);
   void clearPixelClip();
+  void cyclePixelClipShape();
+  void setPixelClipShape(PixelClipShape shape);
+  [[nodiscard]] ClipOp lockedClipOp() const;
+  [[nodiscard]] QPainterPath logicalClipPath() const;
+  void trySnapAt(const QPointF &annotationPoint);
   void beginClipLift(const QPointF &point);
   void updateClipLift(const QPointF &point);
   void finishClipLift();
@@ -566,6 +575,7 @@ private:
   void punchDisplayCaches(QRect nativeRect, const QColor &fill);
   [[nodiscard]] QRect nativeRectForPixelClip(const QRectF &logical) const;
   [[nodiscard]] bool pixelClipLargeEnough(const QRectF &logical) const;
+  [[nodiscard]] QVector<ToolbarButton> clipShapeStripButtons() const;
   [[nodiscard]] Interaction pixelClipHandleAt(const QPointF &point) const;
   [[nodiscard]] QRectF pixelClipWidgetRect() const;
   [[nodiscard]] QRectF clipFillMenuRect() const;
@@ -685,9 +695,12 @@ private:
   // drag, and the cut is applied only when the pointer is released.
   bool cutDragActive_ = false;
   /// Select-tool pixel clip: empty-canvas marquee that hit no layers becomes
-  /// a locked rect on the source. Dragging it lifts a clip layer.
+  /// a locked path on the source. Dragging it lifts a clip layer.
+  PixelClipShape pixelClipShape_ = PixelClipShape::Rect;
   QRectF pixelClipRect_;
   QRectF originalPixelClip_;
+  QVector<QPointF> pixelClipPoints_;
+  QVector<QPointF> originalPixelClipPoints_;
   bool pixelClipResizing_ = false;
   bool clipLiftActive_ = false;
   QRectF clipLiftOrigin_;
@@ -696,9 +709,11 @@ private:
   QImage clipLiftTile_;
   QPixmap clipLiftPixmap_;
   qreal clipLiftPixmapScale_ = 0.0;
+  ClipOp clipLiftOp_;
   bool clipLiftSnapped_ = false;
   /// Hole infill for the next clip. Transparent (alpha 0) is the default.
   QColor clipFill_ = QColor(0, 0, 0, 0);
+  QString clipHexEntry_;
   /// Hash of Cut+Clip ops in `ops_[0, opIndex_)`. When it matches, replay
   /// keeps `capture_.source` and the display caches instead of rebuilding.
   quint64 composedPrefixHash_ = 0;

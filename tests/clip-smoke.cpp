@@ -9,9 +9,13 @@
 #include <QDir>
 #include <QFile>
 #include <QImage>
+#include <QPainter>
+#include <QPoint>
+#include <QPointF>
 #include <QRect>
 #include <QRectF>
 #include <QSize>
+#include <optional>
 
 bool runClipSmoke(QString &error) {
   QImage source(8, 8, QImage::Format_ARGB32_Premultiplied);
@@ -172,6 +176,69 @@ bool runClipSmoke(QString &error) {
     return false;
   }
   QFile::remove(jsonPath);
+
+  QImage disk(32, 32, QImage::Format_ARGB32_Premultiplied);
+  disk.fill(QColor(20, 20, 40, 255));
+  {
+    QPainter painter(&disk);
+    painter.setRenderHint(QPainter::Antialiasing, false);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(220, 80, 40, 255));
+    painter.drawEllipse(QRect(6, 6, 20, 20));
+  }
+  ClipOp ellipse;
+  ellipse.shape = ClipShape::Ellipse;
+  ellipse.sourceRect = QRect(6, 6, 20, 20);
+  const QImage ellipseTile = copyMasked(disk, ellipse);
+  if (ellipseTile.size() != QSize(20, 20)) {
+    error = QStringLiteral("copyMasked ellipse size wrong");
+    return false;
+  }
+  if (ellipseTile.pixelColor(10, 10).alpha() == 0) {
+    error = QStringLiteral("copyMasked ellipse dropped the disk interior");
+    return false;
+  }
+  if (ellipseTile.pixelColor(0, 0).alpha() != 0) {
+    error = QStringLiteral("copyMasked ellipse kept bbox corners");
+    return false;
+  }
+  QImage ellipsePunched = disk;
+  fillHole(ellipsePunched, ellipse);
+  if (ellipsePunched.pixelColor(16, 16).alpha() != 0) {
+    error = QStringLiteral("fillHole ellipse left the disk interior");
+    return false;
+  }
+  if (ellipsePunched.pixelColor(0, 0) != QColor(20, 20, 40, 255)) {
+    error = QStringLiteral("fillHole ellipse touched the field");
+    return false;
+  }
+
+  ClipOp lasso;
+  lasso.shape = ClipShape::Lasso;
+  lasso.points = {QPointF(2, 2), QPointF(14, 2), QPointF(8, 14)};
+  lasso.sourceRect = QRect(2, 2, 13, 13);
+  QImage lassoField(16, 16, QImage::Format_ARGB32_Premultiplied);
+  lassoField.fill(QColor(10, 80, 180, 255));
+  const QImage lassoTile = copyMasked(lassoField, lasso);
+  if (lassoTile.pixelColor(0, 0).alpha() == 0) {
+    error = QStringLiteral("copyMasked lasso dropped a vertex interior");
+    return false;
+  }
+  if (lassoTile.pixelColor(12, 12).alpha() != 0) {
+    error = QStringLiteral("copyMasked lasso kept a point outside the triangle");
+    return false;
+  }
+
+  const std::optional<QRect> snapped = snapEllipseRect(disk, QPoint(16, 16));
+  if (!snapped || !snapped->contains(16, 16) || snapped->width() < 12 ||
+      snapped->height() < 12) {
+    error = QStringLiteral("snapEllipseRect missed the synthetic disk");
+    return false;
+  }
+  if (snapEllipseRect(disk, QPoint(1, 1))) {
+    error = QStringLiteral("snapEllipseRect snapped empty field");
+    return false;
+  }
 
   return true;
 }

@@ -2,7 +2,7 @@
 
 Date: 2026-08-28  
 Branch: `feat/select-clip-out`  
-Status: design locked; awaiting spec review before the implementation plan
+Status: design locked; Fable + Sol P0s applied (2026-08-28)
 
 ## Problem
 
@@ -29,36 +29,39 @@ Stay in **Select** (`V`). Empty-canvas interaction locks a **pixel mask**, not a
 
 Shift while drawing an ellipse still forces 1:1 (a circle), matching existing shape tools. Alt still draws from the centre.
 
-### Shape strip
+### Shape strip and keys (Fable/Sol P0)
+
+`R`, `E`, and `F` **keep arming the drawing tools on first press**, including the selected-shape fill toggle. Clip shape is **not** stolen from those keys. That is the Spotlight/Highlighter pattern: first press arms the tool; a second press on an already-armed tool cycles a variant. Select is already armed, so **`V` while in Select cycles the clip-shape variant.**
 
 While Select is the current tool, a strip sits **above the toolbar**:
 
-| Chip | First key (stays in Select) | Tooltip |
+| Chip | How you pick it | Tooltip |
 |---|---|---|
-| Rect | `R` | Rectangle · R · V to cycle · press R again to draw |
-| Ellipse | `E` | Ellipse · E · V to cycle · press E again to draw |
-| Lasso | `F` | Lasso · F · V to cycle · press F again to draw |
-| Snap | click, no drag | Snap · click the object · no drag |
+| Rect | `V` cycle / chip | Clip rectangle · V cycles · empty drag with no layers |
+| Ellipse | `V` cycle / chip | Clip ellipse · V cycles · empty drag with no layers |
+| Lasso | `V` cycle / chip | Clip lasso · V cycles · empty drag with no layers |
+| Snap | `V` cycle / chip | Snap · click the object · empty click only in this mode |
 
-`V` (and a second click of the Select toolbar button) **cycles** Rect → Ellipse → Lasso → Snap → Rect. Status pill names the shape (`Clip · ellipse · drag to lock · click to snap · Esc cancels`).
+`V` from any other tool enters Select on **Rect** (today’s default). `V` (and a second click of the Select toolbar button) **while already in Select** cycles Rect → Ellipse → Lasso → Snap → Rect. Status pill names the shape.
 
-The **bottom-left hotkey legend** gains the clip rows while Select is on, same low-opacity column as today. Hover tooltips on the chips match those rows. Do not add a settings UI.
+The **bottom-left hotkey legend** gains the clip rows while Select is on. Hover tooltips on the chips match those rows. No settings UI.
 
-### Key rule: first press clips, second press draws
+### Gestures (keep today’s Select arbitration)
 
-`R`, `E`, and `F` currently leave Select and arm the drawing tools. That stays available:
+Empty-canvas interaction is still **layer marquee first**:
 
-- **First press** while Select is on: only changes the clip-mask shape; stay in Select.
-- **Second press of the same key**: leave Select and arm the normal drawing tool (rectangle / ellipse / freehand), the same “press again” pattern as Spotlight (`S`) and Highlighter (`H`).
-- Toolbar icons still arm drawing tools in one click, unchanged.
+1. A drag whose normalised rect is at least 2×2 and **encloses one or more layers** multi-selects those layers, **regardless of clip shape**. No pixel mask.
+2. The same drag with **no layers inside** locks a pixel mask in the current geometric shape (Rect / Ellipse / Lasso). If the current chip is Snap, an empty drag locks an **Ellipse** from the drag bbox (manual fallback).
+3. A press-and-release that never reaches 2×2 is a **click**: it deselects, dismisses an uncommitted mask if the click is outside it, or **runs Snap only when the Snap chip is selected** and the click hits no layer. Snap is never implicit in Rect/Ellipse/Lasso.
+4. `Alt+click` on empty canvas also snaps (modifier explicit), even if the chip is not Snap.
 
-A press-and-release that never exceeds the editor’s existing drag slop is Snap **in every clip shape**, not only when the Snap chip is lit. The Snap chip is the visible “this click will snap” state; cycling to it is optional. A drag that passes slop draws the current Rect / Ellipse / Lasso instead.
+Arming any drawing tool **clears** an uncommitted mask. Esc clears hex-entry first if it is open, then the mask, then Select, then the editor — same layered Esc as today.
 
 ### Fill (hole colour)
 
 The existing clip fill fly-out (transparent + palette + custom + eyedropper) stays, labeled with keys. Default fill is transparent.
 
-Fill keys apply **only while a dotted mask is locked** (the path is on screen, not yet lifted). Idle Select does not steal them: `T` still starts Text, `1`–`8` still set annotation colour. Sequence: pick a shape, draw/snap the mask, then `T` / `1`–`8` / `I` / `#`, then grab.
+Fill keys apply **only while a dotted mask is locked and Select is the active tool**. Idle Select does not steal them: `T` still starts Text, `1`–`8` still set annotation colour. Arming a drawing tool clears the uncommitted mask. `I` while locked samples a fill colour **without** leaving Select (the lock stays visible). `#` opens a hex-entry field: digits go to the field, Enter commits, first Esc cancels typing only.
 
 | Key | While a dotted mask is locked | Otherwise |
 |---|---|---|
@@ -85,7 +88,8 @@ enum class ClipShape { Rect, Ellipse, Lasso };
 struct ClipOp {
   ClipShape shape = ClipShape::Rect;
   QRect sourceRect;          // bbox; for Rect/Ellipse this is the shape
-  QVector<QPoint> points;    // Lasso polygon in native pixels; empty otherwise
+  QVector<QPointF> points;   // Lasso vertices in native space; empty otherwise
+                             // Integer bbox is derived; quantize only when rasterizing
   QColor fill;               // invalid or alpha 0 = transparent punch
 };
 ```
@@ -96,7 +100,7 @@ JSON (`type: "clip"`):
 
 - `sourceRect` as today `[x,y,w,h]`
 - `shape`: `"rect"` | `"ellipse"` | `"lasso"` — omitted means `rect`
-- `points`: array of `[x,y]` for lasso only
+- `points`: array of `[x,y]` floats for lasso only
 - `fill`: HexArgb when opaque, omitted when transparent
 - `annotation`: dest rect of the lifted layer, as today
 
@@ -118,18 +122,20 @@ Lasso **adjust** after lock is the eight bbox handles (scale/translate the polyg
 
 ### Click-to-snap
 
-Naive flood-fill from a face click selects cheek, not the circular avatar. Snap must find the **object**, not the local colour.
+Naive flood-fill from a face click selects cheek, not the circular avatar. Snap must find the **object boundary**, not the local colour.
 
-Algorithm, Qt only, bounded so it stays on the UI thread:
+Algorithm, Qt only, **axis-aligned ellipse**, cheap enough for the UI thread (no contour extraction):
 
 1. Map the click to native pixels.
-2. Take a search window centred on the click, cap the window at 512 px on a side, clipped to the composed image.
-3. Compute a simple gradient magnitude in that window (Sobel or adjacent-pixel difference on luma).
-4. Find the **strongest closed high-contrast contour that encloses the click** (connected edge pixels, or a thresholded gradient ring). Prefer the innermost tight ring that still encloses the click if several exist.
-5. Fit an ellipse (or a circle when width/height are within a small ratio) to that contour. Lock an **Ellipse** mask with handles.
-6. If no enclosing contour, the window is empty, or the fitted ellipse would cover most of the screenshot, **fail**: status `Nothing to snap · drag a shape instead`. No mask, no log entry.
+2. Cast **36 rays** from the click, evenly spaced, up to 256 px or the image edge.
+3. Along each ray, take the first pixel whose luma differs from the previous sample by more than 28 (of 255), or whose 3×3 neighbour contrast spikes. Record that point.
+4. Need at least 12 hit rays. Fit an **axis-aligned ellipse** as the bounding ellipse of those points (min/max x/y). If width/height ratio is within 1.12, use a circle (1:1).
+5. Reject if the ellipse covers more than 70% of the screenshot, has a radius under 6 px, or the click is not inside it. Status: `Nothing to snap · drag a shape instead`. No mask, no log entry.
+6. Lock an Ellipse mask with handles.
 
-Do not add OpenCV, ONNX, or a model. Do not run this on a worker unless a later measurement shows a hitch; the 512 px cap exists so it should not.
+Do not add OpenCV, ONNX, or a model. If a later measurement shows a hitch, move this to `QtConcurrent` with a generation token and discard stale results; do not start there.
+
+`copyMasked` stamps any **redaction annotations already in the replayed list at this op** onto the copied tile before it becomes a layer, so a clip cannot lift pixels that a prior redaction already destroyed. `refreshComposedCapture()` must call the same `fillHole(image, ClipOp)` as `replayLog()` so Cut preview cannot reconstruct an ellipse/lasso as a rectangle.
 
 ### Threading
 
@@ -152,7 +158,8 @@ Headless offscreen, in the existing smoke suite. Failures name the first wrong p
 - **Snap** — fixture of a high-contrast circle (the DHH-avatar case, simplified). Click the centre; fitted ellipse covers the disk and not the field. Click empty field; no op, status set.
 - **Undo** — ellipse clip then `Ctrl+Z` restores hole and drops the layer.
 - **Fill keys** — with a locked mask, `T` sets transparent; `1` sets palette[0]; `#` + hex + Enter sets custom. After Esc (no mask), `T` arms the text tool. Idle Select without a mask: `T` must not set clip fill.
-- **Second-press** — `E` in Select sets ellipse clip shape and `tool_ == Select`; a second `E` arms `Tool::Ellipse`.
+- **V-cycle** — `E` from idle Select still arms `Tool::Ellipse`. `V` then `V` cycles clip shape while `tool_ == Select`. `R` with a rectangle layer selected still toggles fill.
+- **Snap vs deselect** — click empty canvas in Rect mode clears selection and does not snap; Snap mode click on a synthetic disk locks an ellipse.
 
 `make check` after the behavioural change.
 

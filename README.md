@@ -37,12 +37,15 @@ resizable vector layers and preserves the monitor's native pixels on scaled disp
   mesh-gradient backdrops, and rendered drop shadows on standard backdrop cards.
 - Cut tool: drag across a band of the image to remove it and collapse the gap, with a
   live preview and dashed seam marker while dragging; annotations shift to follow.
-- Clip-out: in Select, a large enough empty marquee on the screenshot locks a
-  pixel region (crop handles stay until you lift); a side fly-out picks the hole
-  infill (transparent by default, or any palette / custom colour). Drag the rect
-  to lift those pixels as a layer. Release near the hole to snap back; release
-  elsewhere to commit. Repeat to pull another region. Esc / Ctrl+Z during a lift
-  cancels only the lift. Distinct from Cut, which collapses a band.
+- Clip-out: in Select, `V` cycles clip shape (rectangle, ellipse, lasso, snap)
+  and a strip under the toolbar shows the same chips. A large enough empty
+  marquee that hits no layers locks a pixel mask of that shape (snap is
+  click-to-fit an ellipse on a high-contrast object; crop handles stay until
+  you lift). A fly-out picks the hole infill (transparent by default; `T` /
+  `1`–`8` / `I` / `#` while the mask is locked). Drag inside to lift a layer
+  with alpha outside the path. Release near the hole to snap back; elsewhere
+  to commit. Esc / Ctrl+Z during a lift cancels only the lift. Distinct from
+  Cut, which collapses a band. `R` / `E` / `F` still arm the drawing tools.
 - Pin a finished capture as a bottom-right always-on-top layer surface, launched
   from the same `omasnap` executable and visible on every workspace.
 - Crash-resistant working documents under `/run/user/<UID>/omasnap/` (falling back to
@@ -356,7 +359,7 @@ without reaching for the pointer.
 
 | Input | Action |
 |---|---|
-| `V` | Select/move/resize layers; carrying one past the source grows the canvas; drag empty canvas for a marquee; a large enough empty marquee locks a pixel clip (crop handles stay until you lift) with a side hole-fill fly-out (transparent default, 1–8 / eyedropper / custom for colour) — drag inside to lift it out as a new layer (repeat); multi-select outlines each layer without treating the canvas as one layer; wheel scales the selected layer (ignored on a clip) |
+| `V` | Select/move/resize layers; carrying one past the source grows the canvas; press again to cycle clip shape (rectangle, ellipse, lasso, snap); drag empty canvas for a marquee; a large enough empty marquee that hits no layers locks a pixel mask of the current shape (snap: click an object; crop handles stay until you lift) with a hole-fill fly-out (transparent default; `T` / `1`–`8` / eyedropper / `#` hex while locked) — drag inside to lift it out as a new layer (repeat); multi-select outlines each layer without treating the canvas as one layer; wheel scales the selected layer (ignored on a clip) |
 | `A` | Arrow |
 | `S` | Spotlight/loupe; press again to cycle ellipse, rectangle, rounded |
 | `L` | Straight line |
