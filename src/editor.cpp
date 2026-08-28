@@ -2672,26 +2672,59 @@ void CaptureEditor::cyclePixelClipShape() {
 }
 
 void CaptureEditor::setPixelClipShape(PixelClipShape shape) {
+  const bool hadLock = !pixelClipRect_.isEmpty();
+  const bool wasLasso = !pixelClipPoints_.isEmpty();
+  const bool wasEllipse =
+      !wasLasso && (pixelClipShape_ == PixelClipShape::Ellipse ||
+                    pixelClipShape_ == PixelClipShape::Snap);
   pixelClipShape_ = shape;
-  if (shape != PixelClipShape::Lasso && pixelClipRect_.isEmpty())
+  if (hadLock) {
+    if (shape == PixelClipShape::Lasso && pixelClipPoints_.isEmpty()) {
+      const QRectF box = pixelClipRect_.normalized();
+      if (wasEllipse) {
+        const QPointF c = box.center();
+        const qreal rx = box.width() / 2.0;
+        const qreal ry = box.height() / 2.0;
+        pixelClipPoints_.clear();
+        for (int i = 0; i < 24; ++i) {
+          const qreal a = static_cast<qreal>(i) * (2.0 * std::numbers::pi / 24.0);
+          pixelClipPoints_.push_back(
+              QPointF(c.x() + rx * std::cos(a), c.y() + ry * std::sin(a)));
+        }
+      } else {
+        pixelClipPoints_ = {box.topLeft(), box.topRight(), box.bottomRight(),
+                            box.bottomLeft()};
+      }
+    }
+    if (shape != PixelClipShape::Lasso)
+      pixelClipPoints_.clear();
+    if (shape == PixelClipShape::Snap)
+      trySnapAt(pixelClipRect_.normalized().center(), false);
+  } else if (shape != PixelClipShape::Lasso) {
     pixelClipPoints_.clear();
+  }
   switch (shape) {
   case PixelClipShape::Rect:
-    setStatus(QStringLiteral(
-        "Clip · rectangle · empty drag with no layers locks a mask · V cycles"));
+    setStatus(hadLock ? QStringLiteral(
+                            "Clip · rectangle · drag inside to lift · V cycles")
+                      : QStringLiteral("Clip · rectangle · drag a box on empty "
+                                       "canvas · V cycles"));
     break;
   case PixelClipShape::Ellipse:
-    setStatus(QStringLiteral(
-        "Clip · ellipse · empty drag with no layers locks a mask · V cycles"));
+    setStatus(hadLock ? QStringLiteral(
+                            "Clip · ellipse · drag inside to lift · V cycles")
+                      : QStringLiteral("Clip · ellipse · drag a box on empty "
+                                       "canvas · V cycles"));
     break;
   case PixelClipShape::Lasso:
-    setStatus(QStringLiteral(
-        "Clip · lasso · empty drag with no layers locks a mask · V cycles"));
+    setStatus(hadLock ? QStringLiteral(
+                            "Clip · lasso · drag inside to lift · V cycles")
+                      : QStringLiteral("Clip · lasso · trace a shape · V cycles"));
     break;
   case PixelClipShape::Snap:
     setStatus(QStringLiteral(
-        "Clip · snap · click an object · empty drag still selects layers · V "
-        "cycles"));
+        "Clip · snap · click the object (Esc first if a mask is in the way) · "
+        "V cycles"));
     break;
   }
   update();
@@ -2734,7 +2767,7 @@ QPainterPath CaptureEditor::logicalClipPath() const {
   return path;
 }
 
-void CaptureEditor::trySnapAt(const QPointF &annotationPoint) {
+void CaptureEditor::trySnapAt(const QPointF &annotationPoint, bool resetFill) {
   const QRectF logical(annotationPoint, QSizeF(1, 1));
   const QRect native = nativeRectForPixelClip(logical);
   if (native.isEmpty()) {
@@ -2763,7 +2796,8 @@ void CaptureEditor::trySnapAt(const QPointF &annotationPoint) {
   }
   pixelClipRect_ = logicalBox;
   pixelClipPoints_.clear();
-  clipFill_ = QColor(0, 0, 0, 0);
+  if (resetFill)
+    clipFill_ = QColor(0, 0, 0, 0);
   selectedAnnotations_.clear();
   selectedAnnotation_ = -1;
   setStatus(QStringLiteral(

@@ -566,7 +566,7 @@ private:
   void setPixelClipShape(PixelClipShape shape);
   [[nodiscard]] ClipOp lockedClipOp() const;
   [[nodiscard]] QPainterPath logicalClipPath() const;
-  void trySnapAt(const QPointF &annotationPoint);
+  void trySnapAt(const QPointF &annotationPoint, bool resetFill = true);
   void beginClipLift(const QPointF &point);
   void updateClipLift(const QPointF &point);
   void finishClipLift();
