@@ -569,6 +569,7 @@ private:
   void commitDelete(const QVector<int> &indices);
   void commitCrop(const QRectF &crop);
   void commitCut(CutOp cut);
+  [[nodiscard]] bool cutInsertHint() const;
   void commitClip(ClipOp clip, Annotation annotation);
   void commitBackground(BackgroundStyle style, bool imageShadow);
   void clearPixelClip();

@@ -1853,6 +1853,8 @@ QJsonObject operationToJson(const Operation &operation) {
     object.insert(QStringLiteral("sourceEnd"), operation.cut.sourceEnd);
     object.insert(QStringLiteral("logicalStart"), operation.cut.logicalStart);
     object.insert(QStringLiteral("logicalEnd"), operation.cut.logicalEnd);
+    if (operation.cut.insert)
+      object.insert(QStringLiteral("insert"), true);
     break;
   case Operation::Type::Clip: {
     object.insert(QStringLiteral("type"), QStringLiteral("clip"));
@@ -1953,6 +1955,7 @@ bool operationFromJson(const QJsonObject &object, Operation &operation,
         object.value(QStringLiteral("logicalStart")).toInt();
     operation.cut.logicalEnd =
         object.value(QStringLiteral("logicalEnd")).toInt();
+    operation.cut.insert = object.value(QStringLiteral("insert")).toBool();
     return true;
   }
   if (type == QStringLiteral("clip")) {

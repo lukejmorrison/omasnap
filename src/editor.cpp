@@ -1395,7 +1395,9 @@ QString CaptureEditor::toolStatus() const {
                           "it circular")
         .arg(size);
   case Tool::Cut:
-    return QStringLiteral("Cut · drag a band to remove it");
+    return cutInsertHint()
+               ? QStringLiteral("Insert a band · drag across")
+               : QStringLiteral("Cut · drag a band to remove it");
   case Tool::Highlighter:
     return highlighterStatus();
   case Tool::Arrow:
@@ -2327,7 +2329,9 @@ CaptureEditor::toolbarButtons(QVector<qreal> *groupDividers,
       QStringLiteral("Redact · D · %1 · D again toggles")
           .arg(redactionStyleName(redactionStyle_)));
   add(36, QStringLiteral("tool-cut"), {},
-      QStringLiteral("Cut out a band · X · drag across"));
+      cutInsertHint()
+          ? QStringLiteral("Insert a band · drag across")
+          : QStringLiteral("Cut out a band · X · drag across"));
   add(36, QStringLiteral("tool-text"), {},
       QStringLiteral("%1 text · T · %2 · %3 · T again cycles style · "
                      "Shift+T cycles font · Wheel")
@@ -2603,6 +2607,15 @@ void CaptureEditor::commitCrop(const QRectF &crop) {
   op.type = Operation::Type::Crop;
   op.crop = crop;
   commitOp(std::move(op));
+}
+
+bool CaptureEditor::cutInsertHint() const {
+  if (tool_ != Tool::Cut)
+    return false;
+  if (cutDragActive_)
+    return liveCut_.insert;
+  return QGuiApplication::queryKeyboardModifiers().testFlag(
+      Qt::ControlModifier);
 }
 
 void CaptureEditor::commitCut(CutOp cut) {
@@ -3481,6 +3494,13 @@ void CaptureEditor::replayLog() {
       const qreal band = hi - lo;
       for (Annotation &annotation : annotations) {
         auto shift = [&](QPointF &point) {
+          if (op.cut.insert) {
+            if (horizontal)
+              point.setY(shiftForInsert(point.y(), lo, band));
+            else
+              point.setX(shiftForInsert(point.x(), lo, band));
+            return;
+          }
           if (horizontal)
             point.setY(shiftForCut(point.y(), lo, hi));
           else
@@ -3492,15 +3512,19 @@ void CaptureEditor::replayLog() {
           shift(point);
       }
       if (band > 0.0) {
-        if (horizontal)
+        if (op.cut.insert) {
+          if (horizontal)
+            selection.setHeight(selection.height() + band);
+          else
+            selection.setWidth(selection.width() + band);
+        } else if (horizontal)
           selection.setHeight(std::max<qreal>(1.0, selection.height() - band));
         else
           selection.setWidth(std::max<qreal>(1.0, selection.width() - band));
       }
       cuts.push_back(op.cut);
       if (!reuseComposed && !composed.isNull())
-        composed = removeBand(composed, op.cut.orientation, op.cut.sourceStart,
-                              op.cut.sourceEnd);
+        composed = applyCutOp(composed, op.cut);
       break;
     }
     case Operation::Type::Clip: {
@@ -4496,7 +4520,9 @@ void CaptureEditor::handleToolbar(const QString &action) {
   } else if (action == QStringLiteral("tool-cut")) {
     tool_ = Tool::Cut;
     selectedAnnotation_ = -1;
-    setStatus(QStringLiteral("Cut: drag across a band to remove it"));
+    setStatus(cutInsertHint()
+                  ? QStringLiteral("Insert a band · drag across")
+                  : QStringLiteral("Cut: drag across a band to remove it"));
   } else if (action == QStringLiteral("tool-text")) {
     if (tool_ == Tool::Text)
       toggleTextBackground();
@@ -4951,7 +4977,9 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
     }
   } else if (event->key() == Qt::Key_X) {
     tool_ = Tool::Cut;
-    setStatus(QStringLiteral("Cut: drag across a band to remove it"));
+    setStatus(heldModifiers(event->modifiers()).testFlag(Qt::ControlModifier)
+                  ? QStringLiteral("Insert a band · drag across")
+                  : QStringLiteral("Cut: drag across a band to remove it"));
   } else if (event->key() == Qt::Key_T &&
              event->modifiers() == Qt::ShiftModifier) {
     cycleTextFont();
@@ -4995,6 +5023,10 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
       commitBackground(backgroundStyle_, next);
     } else
       cycleBackground();
+  } else if (tool_ == Tool::Cut &&
+             (event->key() == Qt::Key_Control ||
+              event->key() == Qt::Key_Meta)) {
+    setStatus(QStringLiteral("Insert a band · drag across"));
   } else if (event->key() >= Qt::Key_1 && event->key() <= Qt::Key_8) {
     colorIndex_ = event->key() - Qt::Key_1;
     usingCustomColor_ = false;
@@ -5024,6 +5056,14 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
 
 void CaptureEditor::keyReleaseEvent(QKeyEvent *event) {
   modifiersSeen_ = true;
+  if (tool_ == Tool::Cut &&
+      (event->key() == Qt::Key_Control || event->key() == Qt::Key_Meta) &&
+      !cutDragActive_) {
+    setStatus(QStringLiteral("Cut: drag across a band to remove it"));
+    QWidget::keyReleaseEvent(event);
+    update();
+    return;
+  }
   if (event->key() == Qt::Key_Shift &&
       (creationConstraintActive_ || resizeConstraintActive_)) {
     creationConstraintActive_ = false;
@@ -5334,6 +5374,9 @@ void CaptureEditor::mouseMoveEvent(QMouseEvent *event) {
         liveCut_.orientation = std::abs(delta.y()) >= std::abs(delta.x())
                                     ? Qt::Horizontal
                                     : Qt::Vertical;
+        liveCut_.insert =
+            liveCut_.insert || heldModifiers(event->modifiers())
+                                   .testFlag(Qt::ControlModifier);
         // Lock the source/preview mapping together with the drag axis. The
         // capture remains unchanged until this preview is committed.
         cutDragOriginOffset_ = liveCut_.orientation == Qt::Horizontal
@@ -5841,9 +5884,12 @@ void CaptureEditor::mousePressEvent(QMouseEvent *event) {
   } else if (tool_ == Tool::Cut) {
     // Activation waits for a dominant drag axis (see mouseMoveEvent); a
     // plain click never crosses that threshold and mouseReleaseEvent treats
-    // it as a no-op.
+    // it as a no-op. Ctrl at press arms insert; the 3px lock records it.
     cutDragStart_ = point;
     cutDragActive_ = false;
+    liveCut_ = {};
+    liveCut_.insert = heldModifiers(event->modifiers())
+                          .testFlag(Qt::ControlModifier);
     dragging_ = true;
   } else {
     dragStart_ = point;
@@ -6091,23 +6137,24 @@ void CaptureEditor::mouseReleaseEvent(QMouseEvent *event) {
     const qreal band = hi - lo;
     const qreal extent =
         horizontal ? selection_.height() : selection_.width();
-    if (band <= 0.0 || band >= extent) {
-      // Full-extent (or empty) band: toAnnotationPoint clamps lo/hi to
-      // [0, extent], so an edge-to-edge drag on a full selection lands
-      // exactly here. removeBand() no-ops on this band, so applying it
-      // would still shrink composedLogicalSize/selection_ while the actual
-      // pixels don't shrink -- desyncing preview size from the source
-      // aspect. Bail out instead.
+    if (band <= 0.0 || (!liveCut_.insert && band >= extent)) {
+      // Full-extent (or empty) remove is a no-op in removeBand(), so
+      // applying it would still shrink composedLogicalSize/selection_
+      // while the pixels stay put. Insert may grow past the current
+      // extent. Empty always bails.
       cutDragActive_ = false;
       refreshComposedCapture();
-      setStatus(QStringLiteral("Cut too large — nothing left"));
+      setStatus(liveCut_.insert ? QStringLiteral("Insert too small")
+                                : QStringLiteral("Cut too large — nothing left"));
       updatePointerCursor();
       update();
       return;
     }
     cutDragActive_ = false;
     commitCut(liveCut_);
-    setStatus(QStringLiteral("Cut applied · Ctrl+Z to undo"));
+    setStatus(liveCut_.insert
+                  ? QStringLiteral("Band inserted · Ctrl+Z to undo")
+                  : QStringLiteral("Cut applied · Ctrl+Z to undo"));
     updatePointerCursor();
     update();
     return;
@@ -6506,8 +6553,7 @@ void CaptureEditor::refreshComposedCapture() {
   for (int index = 0; index < opIndex_ && index < ops_.size(); ++index) {
     const Operation &op = ops_.at(index);
     if (op.type == Operation::Type::Cut)
-      composed = removeBand(composed, op.cut.orientation, op.cut.sourceStart,
-                            op.cut.sourceEnd);
+      composed = applyCutOp(composed, op.cut);
     else if (op.type == Operation::Type::Clip)
       fillHole(composed, op.clip);
   }
@@ -7212,6 +7258,7 @@ void CaptureEditor::paintEdit(QPainter &painter) {
        {QStringLiteral("C"), QStringLiteral("Marker")},
        {QStringLiteral("R / E"), QStringLiteral("Rectangle / Ellipse")},
        {QStringLiteral("X"), QStringLiteral("Cut out a band")},
+       {QStringLiteral("Ctrl"), QStringLiteral("Insert a band (with Cut)")},
        {QStringLiteral("T"),
         QStringLiteral("Text · T cycles hole fill when clipping")},
        {QStringLiteral("Double click"), QStringLiteral("Edit text layer")},
@@ -7572,13 +7619,17 @@ void CaptureEditor::paintEdit(QPainter &painter) {
                                      selection_.height());
     painter.save();
     painter.setClipRect(band);
-    painter.fillRect(band, QColor(104, 110, 120, 175));
+    painter.fillRect(band, liveCut_.insert ? QColor(48, 180, 90, 140)
+                                           : QColor(104, 110, 120, 175));
 
-    const qreal spacing = 14.0 / scale;
-    painter.setPen(QPen(QColor(255, 255, 255, 72), 1.0 / scale));
-    for (qreal x = band.left() - band.height(); x < band.right(); x += spacing)
-      painter.drawLine(QPointF(x, band.bottom()),
-                       QPointF(x + band.height(), band.top()));
+    if (!liveCut_.insert) {
+      const qreal spacing = 14.0 / scale;
+      painter.setPen(QPen(QColor(255, 255, 255, 72), 1.0 / scale));
+      for (qreal x = band.left() - band.height(); x < band.right();
+           x += spacing)
+        painter.drawLine(QPointF(x, band.bottom()),
+                         QPointF(x + band.height(), band.top()));
+    }
 
     const QPointF center = band.center();
     const qreal crossRadius =
@@ -7587,10 +7638,17 @@ void CaptureEditor::paintEdit(QPainter &painter) {
     if (crossRadius >= 3.0 / scale) {
       painter.setPen(QPen(QColor(255, 255, 255, 230), 2.0 / scale,
                           Qt::SolidLine, Qt::RoundCap));
-      painter.drawLine(center + QPointF(-crossRadius, -crossRadius),
-                       center + QPointF(crossRadius, crossRadius));
-      painter.drawLine(center + QPointF(-crossRadius, crossRadius),
-                       center + QPointF(crossRadius, -crossRadius));
+      if (liveCut_.insert) {
+        painter.drawLine(center + QPointF(-crossRadius, 0),
+                         center + QPointF(crossRadius, 0));
+        painter.drawLine(center + QPointF(0, -crossRadius),
+                         center + QPointF(0, crossRadius));
+      } else {
+        painter.drawLine(center + QPointF(-crossRadius, -crossRadius),
+                         center + QPointF(crossRadius, crossRadius));
+        painter.drawLine(center + QPointF(-crossRadius, crossRadius),
+                         center + QPointF(crossRadius, -crossRadius));
+      }
     }
     painter.restore();
 
@@ -7867,6 +7925,9 @@ void CaptureEditor::paintEdit(QPainter &painter) {
                                      ? QStringLiteral("tool-ellipse")
                                      : button.action == QStringLiteral("shape-fill")
                                            ? QStringLiteral("tool-rectangle")
+                                     : button.action == QStringLiteral("tool-cut") &&
+                                             cutInsertHint()
+                                           ? QStringLiteral("tool-cut-insert")
                                            : button.action;
       drawToolbarIcon(painter, button.rect, icon, button.label,
                       QColor(245, 245, 247));
