@@ -4,6 +4,7 @@
 #include "output-config.hpp"
 #include "cli-path.hpp"
 #include "clipboard-smoke.hpp"
+#include "clip-align-smoke.hpp"
 #include "clip-mapping-smoke.hpp"
 #include "clip-smoke.hpp"
 #include "cut-mapping-smoke.hpp"
@@ -8885,6 +8886,12 @@ int main(int argc, char **argv) {
   QString clipError;
   if (!runClipSmoke(clipError)) {
     qWarning().noquote() << "clip smoke failed:" << clipError;
+    return EXIT_FAILURE;
+  }
+
+  QString clipAlignError;
+  if (!runClipAlignSmoke(clipAlignError)) {
+    qWarning().noquote() << "clip align smoke failed:" << clipAlignError;
     return EXIT_FAILURE;
   }
 

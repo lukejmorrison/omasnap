@@ -3,6 +3,7 @@
 #include "editor.hpp"
 
 #include "clip.hpp"
+#include "clip-align.hpp"
 #include "stitch.hpp"
 #include "icons.hpp"
 #include "eyedropper.hpp"
@@ -3011,6 +3012,86 @@ void CaptureEditor::cancelClipLift() {
   clipLiftPixmap_ = {};
   clipLiftPixmapScale_ = 0.0;
   clipLiftSnapped_ = false;
+  clearClipAlignGuides();
+}
+
+void CaptureEditor::clearClipAlignGuides() {
+  clipAlignGuides_.clear();
+  clipAlignSnapped_ = false;
+}
+
+void CaptureEditor::applyClipAlign(QRectF &bounds, int movingAnnotation,
+                                   Qt::KeyboardModifiers modifiers) {
+  if (bounds.isEmpty()) {
+    clearClipAlignGuides();
+    return;
+  }
+  ClipAlignInput input;
+  input.altHeld = heldModifiers(modifiers).testFlag(Qt::AltModifier);
+  input.enterThreshold = clipSnapEnterThreshold(editScale());
+  input.leaveThreshold = clipSnapLeaveThreshold(editScale());
+  input.wasSnapped = clipAlignSnapped_;
+
+  int origin = -1;
+  for (int index = 0; index < annotations_.size(); ++index) {
+    if (annotations_.at(index).kind == Annotation::Kind::Clip) {
+      origin = index;
+      break;
+    }
+  }
+  if (origin < 0) {
+    input.hole = clipLiftOrigin_;
+    input.clips = {bounds};
+    input.moving = 0;
+  } else {
+    QRectF hole;
+    for (int index = 0; index < opIndex_ && index < ops_.size(); ++index) {
+      const Operation &op = ops_.at(index);
+      if (op.type != Operation::Type::Clip || op.annotations.isEmpty())
+        continue;
+      if (op.annotations.front().id != annotations_.at(origin).id)
+        continue;
+      const QRect native = op.clip.sourceRect;
+      if (capture_.source.isNull() || capture_.previewSize.isEmpty() ||
+          capture_.source.width() <= 0 || capture_.source.height() <= 0)
+        hole = QRectF(native);
+      else {
+        const qreal scaleX = static_cast<qreal>(capture_.previewSize.width()) /
+                             static_cast<qreal>(capture_.source.width());
+        const qreal scaleY = static_cast<qreal>(capture_.previewSize.height()) /
+                             static_cast<qreal>(capture_.source.height());
+        hole = QRectF(native.x() * scaleX, native.y() * scaleY,
+                      native.width() * scaleX, native.height() * scaleY);
+      }
+      break;
+    }
+    input.hole = hole;
+    input.clips.push_back(origin == movingAnnotation
+                              ? bounds
+                              : annotationBounds(annotations_.at(origin)));
+    input.moving = 0;
+    if (movingAnnotation != origin) {
+      input.clips.push_back(bounds);
+      input.moving = 1;
+    }
+    for (int index = 0; index < annotations_.size(); ++index) {
+      if (index == origin || index == movingAnnotation)
+        continue;
+      if (annotations_.at(index).kind == Annotation::Kind::Clip)
+        input.clips.push_back(annotationBounds(annotations_.at(index)));
+    }
+  }
+
+  const ClipAlignResult result = clipAlign(input);
+  clipAlignGuides_.clear();
+  for (const ClipAlignGuide &guide : result.guides)
+    clipAlignGuides_.push_back(guide.line);
+  if (result.snapDelta) {
+    bounds.translate(*result.snapDelta);
+    clipAlignSnapped_ = true;
+  } else {
+    clipAlignSnapped_ = false;
+  }
 }
 
 void CaptureEditor::rebuildClipLiftPixmap() {
@@ -3249,6 +3330,10 @@ void CaptureEditor::updateClipLift(const QPointF &point) {
     clipLiftSnapped_ = clipDestSnapped(dest, clipLiftOrigin_, leave);
   else
     clipLiftSnapped_ = clipDestSnapped(dest, clipLiftOrigin_, enter);
+  if (!clipLiftSnapped_)
+    applyClipAlign(dest, -1, QGuiApplication::queryKeyboardModifiers());
+  else
+    clearClipAlignGuides();
   clipLiftDest_ = dest;
 }
 
@@ -5309,6 +5394,16 @@ void CaptureEditor::mouseMoveEvent(QMouseEvent *event) {
       const QRectF originalBox = annotationBounds(originalAnnotation_);
       if (interaction_ == Interaction::Move) {
         translateAnnotation(annotation, point - dragStart_);
+        if (annotation.kind == Annotation::Kind::Clip &&
+            selectedAnnotations_.size() <= 1) {
+          QRectF bounds = annotationBounds(annotation);
+          applyClipAlign(bounds, selectedAnnotation_, event->modifiers());
+          const QPointF aligned = bounds.topLeft() - annotation.start;
+          if (!aligned.isNull())
+            translateAnnotation(annotation, aligned);
+        } else {
+          clearClipAlignGuides();
+        }
       } else if (isBoxResize(interaction_)) {
         applyBoxResize(annotation, interaction_, point, originalBox);
       } else if (interaction_ == Interaction::ResizeStart) {
@@ -5960,6 +6055,7 @@ void CaptureEditor::mouseReleaseEvent(QMouseEvent *event) {
       commitPatch(selectedAnnotations_);
     dragStartStateValid_ = false;
     dragChanged_ = false;
+    clearClipAlignGuides();
     setStatus(QStringLiteral("Layer moved · keep drawing, or Esc to select"));
     updatePointerCursor();
     update();
@@ -7609,6 +7705,13 @@ void CaptureEditor::paintEdit(QPainter &painter) {
     painter.setPen(
         QPen(QColor(QStringLiteral("#ffd60a")), 1.6 / scale, Qt::DashLine));
     painter.drawRect(clipLiftOrigin_);
+  }
+  if (!clipAlignGuides_.isEmpty()) {
+    const qreal scale = std::max<qreal>(editScale(), 0.01);
+    painter.setBrush(Qt::NoBrush);
+    painter.setPen(QPen(QColor(186, 192, 202, 90), 1.0 / scale, Qt::DotLine));
+    for (const QLineF &line : clipAlignGuides_)
+      painter.drawLine(line);
   }
   if (cutDragActive_) {
     const qreal scale = std::max<qreal>(editScale(), 0.01);

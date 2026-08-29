@@ -55,8 +55,11 @@ resizable vector layers and preserves the monitor's native pixels on scaled disp
   Sample from image → transparent; `1`–`8` / `I` / `#` while the mask is
   locked). Drag inside to lift a layer with alpha outside the path.
   Release near the hole to snap back; elsewhere to commit. Esc / Ctrl+Z
-  during a lift cancels only the lift. Distinct from Cut, which collapses a
-  band. `R` / `E` / `F` still arm the drawing tools.
+  during a lift cancels only the lift. Dragging a clip layer (the lift or a
+  later Select-drag) shows faint grey dotted guides and snaps to the first
+  clip's hole and to equal-gap filmstrip slots; **Alt** ignores the magnet.
+  Distinct from Cut, which collapses a band. `R` / `E` / `F` still arm the
+  drawing tools.
 - Pin a finished capture as a bottom-right always-on-top layer surface, launched
   from the same `omasnap` executable and visible on every workspace.
 - Crash-resistant working documents under `/run/user/<UID>/omasnap/` (falling back to

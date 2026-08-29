@@ -49,6 +49,8 @@ add_library(omasnap-core STATIC
   src/cut.hpp
   src/clip.cpp
   src/clip.hpp
+  src/clip-align.cpp
+  src/clip-align.hpp
   src/palette-config.cpp
   src/palette-config.hpp
   src/background-config.cpp
@@ -153,6 +155,8 @@ qt_add_executable(omasnap-smoke
   tests/clip-smoke.hpp
   tests/clip-mapping-smoke.cpp
   tests/clip-mapping-smoke.hpp
+  tests/clip-align-smoke.cpp
+  tests/clip-align-smoke.hpp
   tests/palette-config-smoke.cpp
   tests/palette-config-smoke.hpp
   src/cli-path.cpp

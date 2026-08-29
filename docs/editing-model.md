@@ -63,7 +63,9 @@ still fully undoable because of how they're kept in the log:
   `shape` (`rect` omitted, `ellipse`, `lasso` plus `points`); fill as HexArgb
   when opaque. Click-to-snap / Snap-on drag fits the current clip shape
   (rounded rect, ellipse, or silhouette) with a one-lap scan-dot, then the
-  mask locks. Rect stores optional `radius`.
+  mask locks. Rect stores optional `radius`. Dragging a clip layer may magnet
+  it to the first clip's hole and to equal-gap filmstrip slots; that snap is
+  editor-only until release, when the log still stores only the clip position.
 - **Redaction** exists to permanently destroy sensitive content, so it is
   the one place where "non-destructive until export" would be a bug, not a
   feature: `renderCapture` applies redactions to the cropped pixels

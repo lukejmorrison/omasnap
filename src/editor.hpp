@@ -608,6 +608,9 @@ private:
   [[nodiscard]] QRect clipLiftRepaintRect() const;
   void paintClipHolePreview(QPainter &painter,
                             const QRectF &sourceImage) const;
+  void applyClipAlign(QRectF &bounds, int movingAnnotation,
+                      Qt::KeyboardModifiers modifiers);
+  void clearClipAlignGuides();
   void setClipFill(const QColor &fill);
   void applyDefaultClipFill();
   void armClipFillEyedropper();
@@ -752,6 +755,8 @@ private:
   qreal clipLiftPixmapScale_ = 0.0;
   ClipOp clipLiftOp_;
   bool clipLiftSnapped_ = false;
+  QVector<QLineF> clipAlignGuides_;
+  bool clipAlignSnapped_ = false;
   /// Hole infill for the next clip. Transparent (alpha 0) is the default.
   QColor clipFill_ = QColor(0, 0, 0, 0);
   QString clipHexEntry_;
