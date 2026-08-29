@@ -2941,7 +2941,7 @@ void CaptureEditor::trySnapAt(const QPointF &annotationPoint, bool resetFill) {
     pixelClipRadius_ = snap->radius;
   }
   if (resetFill)
-    clipFill_ = QColor(0, 0, 0, 0);
+    applyDefaultClipFill();
   selectedAnnotations_.clear();
   selectedAnnotation_ = -1;
   const QString kind = pixelClipShape_ == PixelClipShape::Lasso
@@ -3169,6 +3169,40 @@ void CaptureEditor::setClipFill(const QColor &fill) {
     setStatus(QStringLiteral(
         "Hole fill transparent · drag inside to clip out · Esc cancels"));
   update();
+}
+
+void CaptureEditor::applyDefaultClipFill() {
+  const QColor around = clipSurroundingFill();
+  clipFill_ = clipFillOpaque(around) ? around : QColor(0, 0, 0, 0);
+}
+
+void CaptureEditor::armClipFillEyedropper() {
+  if (tool_ != Tool::Eyedropper)
+    toolBeforeEyedropper_ = tool_;
+  tool_ = Tool::Eyedropper;
+  setStatus(QStringLiteral(
+      "Sample hole fill from the image · click a pixel · T cycles"));
+}
+
+void CaptureEditor::cycleClipHoleFill() {
+  if (tool_ == Tool::Eyedropper) {
+    tool_ = Tool::Select;
+    setClipFill(QColor(0, 0, 0, 0));
+    return;
+  }
+  const QColor around = clipSurroundingFill();
+  if (!clipFillOpaque(clipFill_)) {
+    if (clipFillOpaque(around))
+      setClipFill(around);
+    else
+      armClipFillEyedropper();
+    return;
+  }
+  if (clipFillOpaque(around) && clipFill_.rgb() == around.rgb()) {
+    armClipFillEyedropper();
+    return;
+  }
+  setClipFill(QColor(0, 0, 0, 0));
 }
 
 void CaptureEditor::beginClipLift(const QPointF &point) {
@@ -4922,9 +4956,9 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
              event->modifiers() == Qt::ShiftModifier) {
     cycleTextFont();
   } else if (event->key() == Qt::Key_T) {
-    if (tool_ == Tool::Select && !pixelClipRect_.isEmpty() &&
-        !clipLiftActive_) {
-      setClipFill(QColor(0, 0, 0, 0));
+    if (!pixelClipRect_.isEmpty() && !clipLiftActive_ &&
+        (tool_ == Tool::Select || tool_ == Tool::Eyedropper)) {
+      cycleClipHoleFill();
     } else {
       const bool textSelected =
           selectedAnnotation_ >= 0 &&
@@ -5936,7 +5970,6 @@ void CaptureEditor::mouseReleaseEvent(QMouseEvent *event) {
         const QRectF clipped = area.intersected(bounds);
         if (pixelClipLargeEnough(clipped)) {
           pixelClipRect_ = clipped;
-          clipFill_ = QColor(0, 0, 0, 0);
           selectedAnnotations_.clear();
           selectedAnnotation_ = -1;
           if (pixelClipShape_ == PixelClipShape::Lasso) {
@@ -5987,6 +6020,7 @@ void CaptureEditor::mouseReleaseEvent(QMouseEvent *event) {
           pixelClipTraceRadius_ = 0;
           pixelClipTracePoints_.clear();
           if (!pixelClipRect_.isEmpty()) {
+            applyDefaultClipFill();
             const QString kind = pixelClipShape_ == PixelClipShape::Lasso
                                      ? QStringLiteral("outline")
                                  : pixelClipShape_ == PixelClipShape::Ellipse
@@ -7178,7 +7212,8 @@ void CaptureEditor::paintEdit(QPainter &painter) {
        {QStringLiteral("C"), QStringLiteral("Marker")},
        {QStringLiteral("R / E"), QStringLiteral("Rectangle / Ellipse")},
        {QStringLiteral("X"), QStringLiteral("Cut out a band")},
-       {QStringLiteral("T"), QStringLiteral("Text · transparent hole when clipping")},
+       {QStringLiteral("T"),
+        QStringLiteral("Text · T cycles hole fill when clipping")},
        {QStringLiteral("Double click"), QStringLiteral("Edit text layer")},
        {QStringLiteral("1–8"), QStringLiteral("Color")},
        {QStringLiteral("Wheel"), QStringLiteral("Zoom selected / tool size")},

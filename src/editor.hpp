@@ -608,6 +608,9 @@ private:
   void paintClipHolePreview(QPainter &painter,
                             const QRectF &sourceImage) const;
   void setClipFill(const QColor &fill);
+  void applyDefaultClipFill();
+  void armClipFillEyedropper();
+  void cycleClipHoleFill();
   void commitCanvasBoundary(CanvasBoundaryMode mode);
   void cycleCanvasBoundary(bool reverse);
   void cycleBackground();
@@ -727,7 +730,7 @@ private:
   /// Select-tool pixel clip: empty-canvas marquee that hit no layers becomes
   /// a locked path on the source. Dragging it lifts a clip layer.
   PixelClipShape pixelClipShape_ = PixelClipShape::Rect;
-  bool pixelClipSnapEnabled_ = false;
+  bool pixelClipSnapEnabled_ = true;
   bool pixelClipLockedEllipse_ = false;
   std::optional<QRectF> pixelClipTraceSnap_;
   qreal pixelClipTraceRadius_ = 0;

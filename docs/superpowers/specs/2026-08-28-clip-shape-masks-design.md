@@ -40,9 +40,9 @@ While Select is the current tool, a strip sits **above the toolbar**:
 | Rect | `V` cycle / chip | Clip rectangle · V cycles · empty drag with no layers |
 | Ellipse | `V` cycle / chip | Clip ellipse · V cycles · empty drag with no layers |
 | Lasso | `V` cycle / chip | Clip lasso · V cycles · empty drag with no layers |
-| Snap | chip toggle | Snap on/off · with it on, click an object (or refine a locked mask) |
+| Snap | chip toggle | Snap on/off · **on by default** · click an object (or refine a locked mask) |
 
-`V` from any other tool enters Select on **Rect** (today’s default). `V` (and a second click of the Select toolbar button) **while already in Select** cycles Rect → Ellipse → Lasso → Rect. Snap is **not** in that cycle: it is an independent toggle so you can still draw Rect / Ellipse / Lasso with snap armed. Status pill names the shape and whether snap is on.
+`V` from any other tool enters Select on **Rect** (today’s default). `V` (and a second click of the Select toolbar button) **while already in Select** cycles Rect → Ellipse → Lasso → Rect. Snap is **not** in that cycle: it is an independent toggle, **on when Select starts**, so you can still draw Rect / Ellipse / Lasso with snap armed. Status pill names the shape and whether snap is on.
 
 The **bottom-left hotkey legend** gains the clip rows while Select is on. Hover tooltips on the chips match those rows. No settings UI.
 
@@ -60,18 +60,18 @@ Arming any drawing tool **clears** an uncommitted mask. Esc clears hex-entry fir
 
 ### Fill (hole colour)
 
-The clip fill fly-out is transparent + **match surroundings** (median colour just outside the mask) + palette + custom + **Sample from image** (same eyedropper as the toolbar). Default fill is transparent.
+The clip fill fly-out is transparent + **match surroundings** (median colour just outside the mask) + palette + custom + **Sample from image** (same eyedropper as the toolbar). Default fill is **match surroundings** when a ring of page pixels exists, else transparent.
 
-Fill keys apply **only while a dotted mask is locked and Select is the active tool**. Idle Select does not steal them: `T` still starts Text, `1`–`8` still set annotation colour. Arming a drawing tool clears the uncommitted mask. `I` while locked samples a fill colour **without** leaving Select (the lock stays visible). `#` opens a hex-entry field: digits go to the field, Enter commits, first Esc cancels typing only.
+Fill keys apply **only while a dotted mask is locked** (Select or the clip eyedropper). Idle Select does not steal them: `T` still starts Text, `1`–`8` still set annotation colour. Arming a drawing tool clears the uncommitted mask. `I` while locked samples a fill colour **without** leaving Select (the lock stays visible). `#` opens a hex-entry field: digits go to the field, Enter commits, first Esc cancels typing only.
 
 | Key | While a dotted mask is locked | Otherwise |
 |---|---|---|
-| `T` | Transparent hole | Text tool, unchanged |
+| `T` | Cycle hole fill: surroundings → Sample from image → transparent → surroundings | Text tool, unchanged |
 | `1`–`8` | Palette fill (already wired on the rect PR) | Annotation colour, unchanged |
 | `I` | Eyedropper, sample the screenshot | Eyedropper for annotation colour, unchanged |
 | `#` | Type `#RRGGBB` (optional `#RGB`); Enter commits, Esc cancels typing | Ignored |
 
-No `#AARRGGBB` and no alpha slider. `T` is the transparent path. `Esc` (or a snap-back lift) clears the mask; `T` is Text again.
+No `#AARRGGBB` and no alpha slider. No settings UI for these: Snap on and surroundings fill are the product defaults. `Esc` (or a snap-back lift) clears the mask; `T` is Text again.
 
 Live preview: the interior of the path shows the fill immediately (checkerboard for transparent). Status names it (`Hole fill transparent · drag inside to clip out` / `Hole fill #E03131 · drag inside to clip out`).
 

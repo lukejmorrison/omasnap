@@ -96,6 +96,27 @@ QImage checkerPinImage() {
   return wheel;
 }
 
+bool ensureSnap(CaptureEditor &editor, QApplication &application, bool on,
+                QString &error) {
+  if (editor.pixelClipSnapEnabledForTest() == on)
+    return true;
+  const QRectF snapChip =
+      editor.toolbarButtonRectForTest(QStringLiteral("clip-shape-snap"));
+  if (snapChip.isEmpty()) {
+    error = QStringLiteral("snap chip was missing from the clip strip");
+    return false;
+  }
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
+                    snapChip.center().toPoint());
+  application.processEvents();
+  if (editor.pixelClipSnapEnabledForTest() != on) {
+    error = on ? QStringLiteral("could not turn snap on")
+               : QStringLiteral("could not turn snap off");
+    return false;
+  }
+  return true;
+}
+
 bool lockWasLooseDrag(const QRectF &locked) {
   return locked.isEmpty() || locked.width() > 56.0 || locked.height() > 56.0 ||
          locked.left() < 3.0 || locked.top() < 3.0 ||
@@ -203,6 +224,8 @@ bool runClipMappingSmoke(QApplication &application, const QString &outputRoot,
     editor.resize(800, 600);
     editor.show();
     application.processEvents();
+    if (!ensureSnap(editor, application, false, error))
+      return false;
     QTest::keyClick(&editor, Qt::Key_B);
     application.processEvents();
     QTest::keyClick(&editor, Qt::Key_V);
@@ -251,8 +274,31 @@ bool runClipMappingSmoke(QApplication &application, const QString &outputRoot,
       error = QStringLiteral("pixel clip did not show a hole-fill fly-out");
       return false;
     }
-    if (clipFillOpaque(editor.clipFillForTest())) {
-      error = QStringLiteral("hole fill was not transparent by default");
+    if (!clipFillOpaque(editor.clipFillForTest())) {
+      error = QStringLiteral(
+          "hole fill did not default to match surroundings");
+      return false;
+    }
+    QTest::keyClick(&editor, Qt::Key_T);
+    application.processEvents();
+    if (editor.armedToolForTest() != CaptureEditor::Tool::Eyedropper) {
+      error = QStringLiteral(
+          "T did not cycle hole fill from surroundings to Sample from image");
+      return false;
+    }
+    QTest::keyClick(&editor, Qt::Key_T);
+    application.processEvents();
+    if (editor.armedToolForTest() != CaptureEditor::Tool::Select ||
+        clipFillOpaque(editor.clipFillForTest())) {
+      error = QStringLiteral(
+          "T did not cycle hole fill from Sample from image to transparent");
+      return false;
+    }
+    QTest::keyClick(&editor, Qt::Key_T);
+    application.processEvents();
+    if (!clipFillOpaque(editor.clipFillForTest())) {
+      error = QStringLiteral(
+          "T did not cycle hole fill from transparent to match surroundings");
       return false;
     }
     QTest::keyClick(&editor, Qt::Key_1);
@@ -522,21 +568,18 @@ bool runClipMappingSmoke(QApplication &application, const QString &outputRoot,
     editor.resize(800, 600);
     editor.show();
     application.processEvents();
+    if (!editor.pixelClipSnapEnabledForTest()) {
+      error = QStringLiteral("snap was not on by default");
+      return false;
+    }
     const QRectF snapChip =
         editor.toolbarButtonRectForTest(QStringLiteral("clip-shape-snap"));
     if (snapChip.isEmpty()) {
       error = QStringLiteral("snap chip was missing from the clip strip");
       return false;
     }
-    QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
-                      snapChip.center().toPoint());
-    application.processEvents();
     if (editor.pixelClipShapeForTest() != CaptureEditor::PixelClipShape::Rect) {
       error = QStringLiteral("snap chip stole the Rect/Ellipse/Lasso shape");
-      return false;
-    }
-    if (!editor.pixelClipSnapEnabledForTest()) {
-      error = QStringLiteral("snap chip did not turn snap on");
       return false;
     }
     QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
@@ -591,11 +634,8 @@ bool runClipMappingSmoke(QApplication &application, const QString &outputRoot,
       error = QStringLiteral("V did not arm clip ellipse");
       return false;
     }
-    const QRectF snapChip =
-        editor.toolbarButtonRectForTest(QStringLiteral("clip-shape-snap"));
-    QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
-                      snapChip.center().toPoint());
-    application.processEvents();
+    if (!ensureSnap(editor, application, true, error))
+      return false;
     if (!editor.pixelClipSnapEnabledForTest()) {
       error = QStringLiteral("ellipse+snap could not turn snap on");
       return false;
@@ -644,11 +684,8 @@ bool runClipMappingSmoke(QApplication &application, const QString &outputRoot,
       error = QStringLiteral("V did not arm clip ellipse for the pin wheel");
       return false;
     }
-    const QRectF snapChip =
-        editor.toolbarButtonRectForTest(QStringLiteral("clip-shape-snap"));
-    QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
-                      snapChip.center().toPoint());
-    application.processEvents();
+    if (!ensureSnap(editor, application, true, error))
+      return false;
     QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier,
                       screenOf(editor, 2, 2));
     QTest::mouseMove(&editor, screenOf(editor, 62, 62), 10);
@@ -692,11 +729,8 @@ bool runClipMappingSmoke(QApplication &application, const QString &outputRoot,
       error = QStringLiteral("two V presses did not arm clip lasso");
       return false;
     }
-    const QRectF snapChip =
-        editor.toolbarButtonRectForTest(QStringLiteral("clip-shape-snap"));
-    QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
-                      snapChip.center().toPoint());
-    application.processEvents();
+    if (!ensureSnap(editor, application, true, error))
+      return false;
     if (!editor.pixelClipSnapEnabledForTest()) {
       error = QStringLiteral("lasso+snap could not turn snap on");
       return false;
@@ -745,11 +779,8 @@ bool runClipMappingSmoke(QApplication &application, const QString &outputRoot,
       error = QStringLiteral("clip shape did not start on Rect");
       return false;
     }
-    const QRectF snapChip =
-        editor.toolbarButtonRectForTest(QStringLiteral("clip-shape-snap"));
-    QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
-                      snapChip.center().toPoint());
-    application.processEvents();
+    if (!ensureSnap(editor, application, true, error))
+      return false;
     if (!editor.pixelClipSnapEnabledForTest()) {
       error = QStringLiteral("rect+snap could not turn snap on");
       return false;
@@ -784,11 +815,8 @@ bool runClipMappingSmoke(QApplication &application, const QString &outputRoot,
     editor.resize(800, 600);
     editor.show();
     application.processEvents();
-    const QRectF snapChip =
-        editor.toolbarButtonRectForTest(QStringLiteral("clip-shape-snap"));
-    QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
-                      snapChip.center().toPoint());
-    application.processEvents();
+    if (!ensureSnap(editor, application, true, error))
+      return false;
     QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier,
                       screenOf(editor, 2, 2));
     QTest::mouseMove(&editor, screenOf(editor, 62, 62), 10);
@@ -821,11 +849,8 @@ bool runClipMappingSmoke(QApplication &application, const QString &outputRoot,
     application.processEvents();
     QTest::keyClick(&editor, Qt::Key_V);
     application.processEvents();
-    const QRectF snapChip =
-        editor.toolbarButtonRectForTest(QStringLiteral("clip-shape-snap"));
-    QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
-                      snapChip.center().toPoint());
-    application.processEvents();
+    if (!ensureSnap(editor, application, true, error))
+      return false;
     if (!editor.pixelClipSnapEnabledForTest() ||
         editor.pixelClipShapeForTest() !=
             CaptureEditor::PixelClipShape::Lasso) {
