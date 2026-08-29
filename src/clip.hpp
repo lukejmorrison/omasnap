@@ -32,12 +32,25 @@ struct ClipOp {
   QRect sourceRect;
   QVector<QPointF> points;
   QColor fill;
+  qreal radius = 0; // native px; Rect only, 0 is sharp
   bool operator==(const ClipOp &) const = default;
+};
+
+/** Outer object under a click: AABB, optional corner radius, silhouette. */
+struct ClipSnapHit {
+  QRect box;
+  qreal radius = 0;
+  QVector<QPointF> contour;
 };
 
 [[nodiscard]] inline bool clipFillOpaque(const QColor &fill) {
   return fill.isValid() && fill.alpha() > 0;
 }
+
+/** Median colour of a thin ring just outside `nativeRect` — the page the
+ *  clipped object sat on. Invalid when the rect has no outside samples. */
+[[nodiscard]] QColor sampleClipSurroundings(const QImage &source,
+                                            QRect nativeRect);
 
 [[nodiscard]] inline QString clipShapeName(ClipShape shape) {
   switch (shape) {
@@ -104,11 +117,37 @@ void fillHole(QImage &image, const ClipOp &clip);
 [[nodiscard]] ClipOp nativeClipOp(ClipShape shape, QRectF logical,
                                   const QVector<QPointF> &logicalPoints,
                                   QSize preview, QSize source,
-                                  const QColor &fill);
+                                  const QColor &fill, qreal logicalRadius = 0);
 
-/** Ray-cast snap: axis-aligned ellipse around `click`, or nullopt. */
+/** Connected object inside `roi` (the user's drag). Paper is sampled just
+ *  outside that box when possible, then high-contrast pixels grow through
+ *  weaker chrome so a gray card margin is not mistaken for the page.
+ *  `roi` empty → 256 px around `click`. Rect uses `box`+`radius`; lasso uses
+ *  `contour`. */
+[[nodiscard]] std::optional<ClipSnapHit>
+snapObject(const QImage &source, QPoint click, QRect roi = {});
+
+/** Circle-seeking snap from `click`. With a drag `roi`, this is the
+ *  smallest circle that covers the connected object in that box (a wheel
+ *  with a pin stays enclosed). With `roi` empty, rays vote for a consistent
+ *  radius so a round crop on a rectangular card stays a circle. */
 [[nodiscard]] std::optional<QRect> snapEllipseRect(const QImage &source,
-                                                   QPoint click);
+                                                   QPoint click,
+                                                   QRect roi = {});
+
+/** Axis-aligned rectangle around `click`. Near-square results become 1:1. */
+[[nodiscard]] std::optional<QRect> snapRectRect(const QImage &source,
+                                                QPoint click);
+
+/** True when a dragged Ellipse/Lasso is tracing a detected circle.
+ *  The snap centre must sit inside the drag, the snap must be near-circular,
+ *  and the two boxes must be within a tracing factor of each other. */
+[[nodiscard]] bool clipTraceSnapFits(const QRectF &drawn, const QRectF &snapped);
+
+/** True when a dragged Rect is tracing a detected rectangle/square. Same
+ *  centre and size checks, but any aspect is allowed if it matches the drag. */
+[[nodiscard]] bool clipRectTraceSnapFits(const QRectF &drawn,
+                                         const QRectF &snapped);
 
 /** Annotation-space distance at which a lifted clip *enters* the snap zone
  *  (~14 widget px). `viewScale` is the editor's annotation-to-widget scale.

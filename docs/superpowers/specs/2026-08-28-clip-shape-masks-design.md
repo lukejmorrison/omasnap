@@ -40,9 +40,9 @@ While Select is the current tool, a strip sits **above the toolbar**:
 | Rect | `V` cycle / chip | Clip rectangle · V cycles · empty drag with no layers |
 | Ellipse | `V` cycle / chip | Clip ellipse · V cycles · empty drag with no layers |
 | Lasso | `V` cycle / chip | Clip lasso · V cycles · empty drag with no layers |
-| Snap | `V` cycle / chip | Snap · click the object · empty click only in this mode |
+| Snap | chip toggle | Snap on/off · with it on, click an object (or refine a locked mask) |
 
-`V` from any other tool enters Select on **Rect** (today’s default). `V` (and a second click of the Select toolbar button) **while already in Select** cycles Rect → Ellipse → Lasso → Snap → Rect. Status pill names the shape.
+`V` from any other tool enters Select on **Rect** (today’s default). `V` (and a second click of the Select toolbar button) **while already in Select** cycles Rect → Ellipse → Lasso → Rect. Snap is **not** in that cycle: it is an independent toggle so you can still draw Rect / Ellipse / Lasso with snap armed. Status pill names the shape and whether snap is on.
 
 The **bottom-left hotkey legend** gains the clip rows while Select is on. Hover tooltips on the chips match those rows. No settings UI.
 
@@ -50,16 +50,17 @@ The **bottom-left hotkey legend** gains the clip rows while Select is on. Hover 
 
 Empty-canvas interaction is still **layer marquee first**:
 
-1. A drag whose normalised rect is at least 2×2 and **encloses one or more layers** multi-selects those layers, **regardless of clip shape**. No pixel mask.
-2. The same drag with **no layers inside** locks a pixel mask in the current geometric shape (Rect / Ellipse / Lasso). If the current chip is Snap, an empty drag locks an **Ellipse** from the drag bbox (manual fallback).
-3. A press-and-release that never reaches 2×2 is a **click**: it deselects, dismisses an uncommitted mask if the click is outside it, or **runs Snap only when the Snap chip is selected** and the click hits no layer. Snap is never implicit in Rect/Ellipse/Lasso.
-4. `Alt+click` on empty canvas also snaps (modifier explicit), even if the chip is not Snap.
+1. A drag whose normalised rect is at least 2×2 and **encloses one or more layers** multi-selects those layers, **regardless of clip shape**. No pixel mask. For lasso, that rect is the **path bounding box**, not the start–end fidget.
+2. The same drag with **no layers inside** locks a pixel mask in the current geometric shape (Rect / Ellipse / Lasso). Lasso keeps the traced vertices; a closed stroke that returns near the start still locks.
+3. A press-and-release that never reaches a large-enough path/box is a **click**: it deselects, dismisses an uncommitted mask if the click is outside it, or **runs Snap when the Snap toggle is on** (and the click hits no layer).
+4. **Snap while tracing:** the drag is the search window. Paper is sampled just **outside** that box; inside it, the connected object under the pointer grows 8-connected (so a checkerboard wheel is one blob, not one square) and a 1 px close fills dark cells. **Ellipse + Snap** then fits a circle that **covers that blob** (a wheel with a pin is enclosed, not cropped). Without a drag, click-to-snap still votes for a consistent radius so a round portrait on a card stays a circle, but keeps a small protrusion if the blob is only a bit larger than that circle. **Rect + Snap** uses the blob's AABB and its corner radius (a Messenger card locks a rounded rect on screen, not a sharp box). **Lasso + Snap** uses the blob silhouette. A blue scan-dot traces the outline, then the mask locks. Crop handles hide while that mask is locked.
+5. `Alt+click` on empty canvas also snaps (modifier explicit), even if the toggle is off. Turning Snap on while a mask is locked refines from the mask centre.
 
 Arming any drawing tool **clears** an uncommitted mask. Esc clears hex-entry first if it is open, then the mask, then Select, then the editor — same layered Esc as today.
 
 ### Fill (hole colour)
 
-The existing clip fill fly-out (transparent + palette + custom + eyedropper) stays, labeled with keys. Default fill is transparent.
+The clip fill fly-out is transparent + **match surroundings** (median colour just outside the mask) + palette + custom + **Sample from image** (same eyedropper as the toolbar). Default fill is transparent.
 
 Fill keys apply **only while a dotted mask is locked and Select is the active tool**. Idle Select does not steal them: `T` still starts Text, `1`–`8` still set annotation colour. Arming a drawing tool clears the uncommitted mask. `I` while locked samples a fill colour **without** leaving Select (the lock stays visible). `#` opens a hex-entry field: digits go to the field, Enter commits, first Esc cancels typing only.
 
@@ -158,8 +159,9 @@ Headless offscreen, in the existing smoke suite. Failures name the first wrong p
 - **Snap** — fixture of a high-contrast circle (the DHH-avatar case, simplified). Click the centre; fitted ellipse covers the disk and not the field. Click empty field; no op, status set.
 - **Undo** — ellipse clip then `Ctrl+Z` restores hole and drops the layer.
 - **Fill keys** — with a locked mask, `T` sets transparent; `1` sets palette[0]; `#` + hex + Enter sets custom. After Esc (no mask), `T` arms the text tool. Idle Select without a mask: `T` must not set clip fill.
-- **V-cycle** — `E` from idle Select still arms `Tool::Ellipse`. `V` then `V` cycles clip shape while `tool_ == Select`. `R` with a rectangle layer selected still toggles fill.
-- **Snap vs deselect** — click empty canvas in Rect mode clears selection and does not snap; Snap mode click on a synthetic disk locks an ellipse.
+- **V-cycle** — `E` from idle Select still arms `Tool::Ellipse`. `V` then `V` cycles clip shape while `tool_ == Select` (Rect → Ellipse → Lasso → Rect). `R` with a rectangle layer selected still toggles fill.
+- **Snap toggle** — Snap chip does not steal Rect/Ellipse/Lasso. Rect + Snap around a square locks a rectangle; around a rounded rect the tile corners are transparent. Ellipse + Snap around a disk locks an ellipse. Lasso + Snap around a disk locks a silhouette path. A closed lasso over stripes still keeps the hand-drawn path.
+- **Lasso release** — a freehand that returns near its start keeps the path; lock uses the path bbox, not the start–end marquee.
 
 `make check` after the behavioural change.
 

@@ -1871,6 +1871,8 @@ QJsonObject operationToJson(const Operation &operation) {
         points.push_back(QJsonArray{point.x(), point.y()});
       object.insert(QStringLiteral("points"), points);
     }
+    if (operation.clip.shape == ClipShape::Rect && operation.clip.radius >= 1.0)
+      object.insert(QStringLiteral("radius"), operation.clip.radius);
     if (clipFillOpaque(operation.clip.fill))
       object.insert(QStringLiteral("fill"),
                     operation.clip.fill.name(QColor::HexArgb));
@@ -1972,6 +1974,8 @@ bool operationFromJson(const QJsonObject &object, Operation &operation,
     const QString fill = object.value(QStringLiteral("fill")).toString();
     if (!fill.isEmpty())
       operation.clip.fill = QColor(fill);
+    operation.clip.radius =
+        object.value(QStringLiteral("radius")).toDouble(0.0);
     if (object.contains(QStringLiteral("annotation"))) {
       Annotation annotation;
       if (!annotationFromJson(

@@ -60,8 +60,9 @@ still fully undoable because of how they're kept in the log:
   Undo a clip and both the hole and the layer disappear together. Live drag is
   editor-only preview; the log is touched only on release. Shape is stored as
   `shape` (`rect` omitted, `ellipse`, `lasso` plus `points`); fill as HexArgb
-  when opaque. Click-to-snap fits an axis-aligned ellipse and then behaves as
-  a normal ellipse mask.
+  when opaque. Click-to-snap / Snap-on drag fits the current clip shape
+  (rounded rect, ellipse, or silhouette) with a one-lap scan-dot, then the
+  mask locks. Rect stores optional `radius`.
 - **Redaction** exists to permanently destroy sensitive content, so it is
   the one place where "non-destructive until export" would be a bug, not a
   feature: `renderCapture` applies redactions to the cropped pixels

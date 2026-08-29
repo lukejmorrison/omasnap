@@ -14,6 +14,7 @@
 #include <QApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QPainter>
 #include <QTest>
 
 namespace {
@@ -39,6 +40,66 @@ bool saveGrab(CaptureEditor &editor, const QString &path, QString &error) {
     return true;
   error = QStringLiteral("could not write %1").arg(path);
   return false;
+}
+
+QImage diskImage() {
+  QImage disk(64, 64, QImage::Format_ARGB32_Premultiplied);
+  disk.fill(QColor(20, 20, 40, 255));
+  QPainter painter(&disk);
+  painter.setRenderHint(QPainter::Antialiasing, false);
+  painter.setPen(Qt::NoPen);
+  painter.setBrush(QColor(220, 80, 40, 255));
+  painter.drawEllipse(QRect(8, 8, 48, 48));
+  return disk;
+}
+
+QImage squareImage() {
+  QImage square(64, 64, QImage::Format_ARGB32_Premultiplied);
+  square.fill(QColor(20, 20, 40, 255));
+  QPainter painter(&square);
+  painter.setRenderHint(QPainter::Antialiasing, false);
+  painter.setPen(Qt::NoPen);
+  painter.setBrush(QColor(220, 80, 40, 255));
+  painter.drawRect(QRect(8, 8, 48, 48));
+  return square;
+}
+
+QImage roundedCardImage() {
+  QImage card(64, 64, QImage::Format_ARGB32_Premultiplied);
+  card.fill(QColor(18, 18, 22, 255));
+  QPainter painter(&card);
+  painter.setRenderHint(QPainter::Antialiasing, false);
+  painter.setPen(Qt::NoPen);
+  painter.setBrush(QColor(40, 42, 48, 255));
+  painter.drawRoundedRect(QRect(8, 8, 48, 48), 10, 10);
+  return card;
+}
+
+QImage checkerPinImage() {
+  QImage wheel(64, 64, QImage::Format_ARGB32_Premultiplied);
+  wheel.fill(QColor(10, 10, 12, 255));
+  for (int y = 8; y <= 47; ++y) {
+    for (int x = 8; x <= 47; ++x) {
+      const qreal dx = x - 27.5;
+      const qreal dy = y - 27.5;
+      if (dx * dx + dy * dy > 20.0 * 20.0)
+        continue;
+      wheel.setPixelColor(x, y,
+                          ((x + y) % 2 == 0) ? QColor(200, 190, 80, 255)
+                                             : QColor(16, 16, 18, 255));
+    }
+  }
+  QPainter painter(&wheel);
+  painter.setPen(Qt::NoPen);
+  painter.setBrush(QColor(240, 200, 40, 255));
+  painter.drawRect(QRect(44, 26, 14, 6));
+  return wheel;
+}
+
+bool lockWasLooseDrag(const QRectF &locked) {
+  return locked.isEmpty() || locked.width() > 56.0 || locked.height() > 56.0 ||
+         locked.left() < 3.0 || locked.top() < 3.0 ||
+         !locked.contains(QPointF(32, 32));
 }
 
 } // namespace
@@ -208,6 +269,44 @@ bool runClipMappingSmoke(QApplication &application, const QString &outputRoot,
       error = QStringLiteral("transparent swatch did not clear the hole fill");
       return false;
     }
+    const QRectF eyedropper =
+        editor.toolbarButtonRectForTest(QStringLiteral("tool-eyedropper"));
+    if (eyedropper.isEmpty()) {
+      error = QStringLiteral("clip fill fly-out missing Sample from image");
+      return false;
+    }
+    QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
+                      eyedropper.center().toPoint());
+    application.processEvents();
+    QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
+                      screenOf(editor, 80, 8));
+    application.processEvents();
+    if (editor.clipFillForTest().rgb() != fixtureBandColor(0).rgb()) {
+      error = QStringLiteral(
+          "eyedropper did not set hole fill from the sampled pixel");
+      return false;
+    }
+    const QRectF surroundings = editor.toolbarButtonRectForTest(
+        QStringLiteral("clip-fill-surroundings"));
+    if (surroundings.isEmpty()) {
+      error = QStringLiteral("clip fill fly-out missing match surroundings");
+      return false;
+    }
+    QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
+                      surroundings.center().toPoint());
+    application.processEvents();
+    if (!clipFillOpaque(editor.clipFillForTest())) {
+      error = QStringLiteral("match surroundings did not set a solid hole fill");
+      return false;
+    }
+    QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
+                      fillMenu.topLeft().toPoint() + QPoint(16, 18));
+    application.processEvents();
+    if (clipFillOpaque(editor.clipFillForTest())) {
+      error = QStringLiteral(
+          "transparent swatch did not restore a clear hole after sampling");
+      return false;
+    }
     if (!saveGrab(editor, outputRoot + QStringLiteral("-clip-marquee.png"),
                   error))
       return false;
@@ -319,6 +418,435 @@ bool runClipMappingSmoke(QApplication &application, const QString &outputRoot,
     }
     if (clips != 2) {
       error = QStringLiteral("repeat clip did not keep both layers");
+      return false;
+    }
+    editor.close();
+  }
+
+  // Closed lasso: start and end sit on the same pixel, so the start–end
+  // marquee is a fidget. The path bbox must still lock.
+  {
+    CaptureEditor editor(fixtureCapture(source),
+                         CaptureEditor::CaptureMode::File);
+    editor.resize(800, 600);
+    editor.show();
+    application.processEvents();
+    QTest::keyClick(&editor, Qt::Key_V);
+    application.processEvents();
+    QTest::keyClick(&editor, Qt::Key_V);
+    application.processEvents();
+    if (editor.pixelClipShapeForTest() !=
+        CaptureEditor::PixelClipShape::Lasso) {
+      error = QStringLiteral("two V presses did not arm clip lasso");
+      return false;
+    }
+    const QPoint start = screenOf(editor, 20, 20);
+    QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, start);
+    application.processEvents();
+    const QPoint corners[] = {screenOf(editor, 90, 20), screenOf(editor, 90, 90),
+                              screenOf(editor, 20, 90), screenOf(editor, 22, 22)};
+    for (const QPoint &corner : corners) {
+      QTest::mouseMove(&editor, corner, 5);
+      application.processEvents();
+    }
+    QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier,
+                        screenOf(editor, 22, 22));
+    application.processEvents();
+    if (editor.pixelClipRectForTest().isEmpty()) {
+      error = QStringLiteral("closed lasso vanished on release");
+      return false;
+    }
+    if (editor.pixelClipPointsForTest().size() < 3) {
+      error = QStringLiteral("closed lasso dropped its path on release");
+      return false;
+    }
+    if (editor.pixelClipRectForTest().width() < 40.0 ||
+        editor.pixelClipRectForTest().height() < 40.0) {
+      error = QStringLiteral("closed lasso locked the start–end fidget box");
+      return false;
+    }
+    if (editor.lockedClipOpForTest().shape != ClipShape::Lasso) {
+      error = QStringLiteral("closed lasso did not lock a lasso clip op");
+      return false;
+    }
+    editor.close();
+  }
+
+  // V cycles Rect → Ellipse → Lasso → Rect. Snap is a toggle, not a shape.
+  {
+    CaptureEditor editor(fixtureCapture(source),
+                         CaptureEditor::CaptureMode::File);
+    editor.resize(800, 600);
+    editor.show();
+    application.processEvents();
+    if (editor.pixelClipShapeForTest() != CaptureEditor::PixelClipShape::Rect) {
+      error = QStringLiteral("clip shape did not start on Rect");
+      return false;
+    }
+    QTest::keyClick(&editor, Qt::Key_V);
+    application.processEvents();
+    if (editor.pixelClipShapeForTest() !=
+        CaptureEditor::PixelClipShape::Ellipse) {
+      error = QStringLiteral("first V did not cycle to Ellipse");
+      return false;
+    }
+    QTest::keyClick(&editor, Qt::Key_V);
+    application.processEvents();
+    if (editor.pixelClipShapeForTest() !=
+        CaptureEditor::PixelClipShape::Lasso) {
+      error = QStringLiteral("second V did not cycle to Lasso");
+      return false;
+    }
+    QTest::keyClick(&editor, Qt::Key_V);
+    application.processEvents();
+    if (editor.pixelClipShapeForTest() != CaptureEditor::PixelClipShape::Rect) {
+      error = QStringLiteral("third V did not return to Rect (snap is a toggle)");
+      return false;
+    }
+    editor.close();
+  }
+
+  // Snap chip is a toggle: Rect stays the draw shape; empty click then snaps.
+  {
+    QImage disk(64, 64, QImage::Format_ARGB32_Premultiplied);
+    disk.fill(QColor(20, 20, 40, 255));
+    {
+      QPainter painter(&disk);
+      painter.setRenderHint(QPainter::Antialiasing, false);
+      painter.setPen(Qt::NoPen);
+      painter.setBrush(QColor(220, 80, 40, 255));
+      painter.drawEllipse(QRect(8, 8, 48, 48));
+    }
+    CaptureEditor editor(fixtureCapture(disk),
+                         CaptureEditor::CaptureMode::File);
+    editor.resize(800, 600);
+    editor.show();
+    application.processEvents();
+    const QRectF snapChip =
+        editor.toolbarButtonRectForTest(QStringLiteral("clip-shape-snap"));
+    if (snapChip.isEmpty()) {
+      error = QStringLiteral("snap chip was missing from the clip strip");
+      return false;
+    }
+    QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
+                      snapChip.center().toPoint());
+    application.processEvents();
+    if (editor.pixelClipShapeForTest() != CaptureEditor::PixelClipShape::Rect) {
+      error = QStringLiteral("snap chip stole the Rect/Ellipse/Lasso shape");
+      return false;
+    }
+    if (!editor.pixelClipSnapEnabledForTest()) {
+      error = QStringLiteral("snap chip did not turn snap on");
+      return false;
+    }
+    QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
+                      screenOf(editor, 32, 32));
+    application.processEvents();
+    if (editor.pixelClipRectForTest().isEmpty()) {
+      error = QStringLiteral("snap-on click did not lock a mask");
+      return false;
+    }
+    if (editor.pixelClipShapeForTest() != CaptureEditor::PixelClipShape::Rect) {
+      error = QStringLiteral("snap click changed the draw shape away from Rect");
+      return false;
+    }
+    if (editor.lockedClipOpForTest().shape != ClipShape::Rect) {
+      error = QStringLiteral("rect+snap click did not lock a rectangle clip op");
+      return false;
+    }
+    QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
+                      snapChip.center().toPoint());
+    application.processEvents();
+    if (editor.pixelClipSnapEnabledForTest()) {
+      error = QStringLiteral("second snap-chip click did not turn snap off");
+      return false;
+    }
+    QTest::keyClick(&editor, Qt::Key_Escape);
+    application.processEvents();
+    if (!editor.pixelClipRectForTest().isEmpty()) {
+      error = QStringLiteral("Esc did not clear the snapped mask");
+      return false;
+    }
+    QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
+                      screenOf(editor, 32, 32));
+    application.processEvents();
+    if (!editor.pixelClipRectForTest().isEmpty()) {
+      error = QStringLiteral("snap-off click still locked a mask");
+      return false;
+    }
+    editor.close();
+  }
+
+  // Ellipse + Snap: a loose drag around a disk locks the detected circle.
+  {
+    CaptureEditor editor(fixtureCapture(diskImage()),
+                         CaptureEditor::CaptureMode::File);
+    editor.resize(800, 600);
+    editor.show();
+    application.processEvents();
+    QTest::keyClick(&editor, Qt::Key_V);
+    application.processEvents();
+    if (editor.pixelClipShapeForTest() !=
+        CaptureEditor::PixelClipShape::Ellipse) {
+      error = QStringLiteral("V did not arm clip ellipse");
+      return false;
+    }
+    const QRectF snapChip =
+        editor.toolbarButtonRectForTest(QStringLiteral("clip-shape-snap"));
+    QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
+                      snapChip.center().toPoint());
+    application.processEvents();
+    if (!editor.pixelClipSnapEnabledForTest()) {
+      error = QStringLiteral("ellipse+snap could not turn snap on");
+      return false;
+    }
+    QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier,
+                      screenOf(editor, 2, 2));
+    QTest::mouseMove(&editor, screenOf(editor, 62, 62), 10);
+    application.processEvents();
+    QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier,
+                        screenOf(editor, 62, 62));
+    application.processEvents();
+    const QRectF locked = editor.pixelClipRectForTest();
+    if (locked.isEmpty()) {
+      error = QStringLiteral("ellipse+snap drag did not lock a mask");
+      return false;
+    }
+    if (editor.pixelClipShapeForTest() !=
+        CaptureEditor::PixelClipShape::Ellipse) {
+      error = QStringLiteral("ellipse+snap changed the draw shape");
+      return false;
+    }
+    if (editor.lockedClipOpForTest().shape != ClipShape::Ellipse) {
+      error = QStringLiteral("ellipse+snap did not lock an ellipse");
+      return false;
+    }
+    if (lockWasLooseDrag(locked)) {
+      error = QStringLiteral(
+          "ellipse+snap kept the loose drag instead of the disk");
+      return false;
+    }
+    editor.close();
+  }
+
+  // Ellipse + Snap around a checker wheel must enclose the pin, not Hough
+  // the clean circle. One grab only — do not dump drag frames.
+  {
+    CaptureEditor editor(fixtureCapture(checkerPinImage()),
+                         CaptureEditor::CaptureMode::File);
+    editor.resize(800, 600);
+    editor.show();
+    application.processEvents();
+    QTest::keyClick(&editor, Qt::Key_V);
+    application.processEvents();
+    if (editor.pixelClipShapeForTest() !=
+        CaptureEditor::PixelClipShape::Ellipse) {
+      error = QStringLiteral("V did not arm clip ellipse for the pin wheel");
+      return false;
+    }
+    const QRectF snapChip =
+        editor.toolbarButtonRectForTest(QStringLiteral("clip-shape-snap"));
+    QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
+                      snapChip.center().toPoint());
+    application.processEvents();
+    QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier,
+                      screenOf(editor, 2, 2));
+    QTest::mouseMove(&editor, screenOf(editor, 62, 62), 10);
+    application.processEvents();
+    QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier,
+                        screenOf(editor, 62, 62));
+    application.processEvents();
+    if (editor.lockedClipOpForTest().shape != ClipShape::Ellipse) {
+      error = QStringLiteral("ellipse+snap on a pin wheel did not lock an ellipse");
+      return false;
+    }
+    const QRect native = editor.lockedClipOpForTest().sourceRect;
+    if (native.left() < 4 || native.right() < 56 || native.width() >= 60) {
+      error = QStringLiteral(
+          "ellipse+snap drag on a checker wheel missed the pin or kept the "
+          "loose drag (left=%1 right=%2 width=%3)")
+          .arg(native.left())
+          .arg(native.right())
+          .arg(native.width());
+      return false;
+    }
+    if (!saveGrab(editor, outputRoot + QStringLiteral("-clip-pin-wheel.png"),
+                  error))
+      return false;
+    editor.close();
+  }
+
+  // Lasso + Snap around a disk magnets to the circle (the people-icon case).
+  {
+    CaptureEditor editor(fixtureCapture(diskImage()),
+                         CaptureEditor::CaptureMode::File);
+    editor.resize(800, 600);
+    editor.show();
+    application.processEvents();
+    QTest::keyClick(&editor, Qt::Key_V);
+    application.processEvents();
+    QTest::keyClick(&editor, Qt::Key_V);
+    application.processEvents();
+    if (editor.pixelClipShapeForTest() !=
+        CaptureEditor::PixelClipShape::Lasso) {
+      error = QStringLiteral("two V presses did not arm clip lasso");
+      return false;
+    }
+    const QRectF snapChip =
+        editor.toolbarButtonRectForTest(QStringLiteral("clip-shape-snap"));
+    QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
+                      snapChip.center().toPoint());
+    application.processEvents();
+    if (!editor.pixelClipSnapEnabledForTest()) {
+      error = QStringLiteral("lasso+snap could not turn snap on");
+      return false;
+    }
+    QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier,
+                      screenOf(editor, 2, 2));
+    application.processEvents();
+    const QPoint around[] = {screenOf(editor, 62, 2), screenOf(editor, 62, 62),
+                             screenOf(editor, 2, 62), screenOf(editor, 4, 4)};
+    for (const QPoint &corner : around) {
+      QTest::mouseMove(&editor, corner, 5);
+      application.processEvents();
+    }
+    QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier,
+                        screenOf(editor, 4, 4));
+    application.processEvents();
+    if (editor.pixelClipShapeForTest() !=
+        CaptureEditor::PixelClipShape::Lasso) {
+      error = QStringLiteral("lasso+snap changed the draw shape");
+      return false;
+    }
+    if (editor.lockedClipOpForTest().shape != ClipShape::Lasso) {
+      error = QStringLiteral("lasso+snap around a disk did not lock an outline");
+      return false;
+    }
+    if (editor.pixelClipPointsForTest().size() < 8) {
+      error = QStringLiteral("lasso+snap around a disk did not keep a silhouette");
+      return false;
+    }
+    if (lockWasLooseDrag(editor.pixelClipRectForTest())) {
+      error = QStringLiteral(
+          "lasso+snap around a disk kept the loose path instead of the circle");
+      return false;
+    }
+    editor.close();
+  }
+
+  // Rect + Snap around a square locks the detected rectangle, not a circle.
+  {
+    CaptureEditor editor(fixtureCapture(squareImage()),
+                         CaptureEditor::CaptureMode::File);
+    editor.resize(800, 600);
+    editor.show();
+    application.processEvents();
+    if (editor.pixelClipShapeForTest() != CaptureEditor::PixelClipShape::Rect) {
+      error = QStringLiteral("clip shape did not start on Rect");
+      return false;
+    }
+    const QRectF snapChip =
+        editor.toolbarButtonRectForTest(QStringLiteral("clip-shape-snap"));
+    QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
+                      snapChip.center().toPoint());
+    application.processEvents();
+    if (!editor.pixelClipSnapEnabledForTest()) {
+      error = QStringLiteral("rect+snap could not turn snap on");
+      return false;
+    }
+    QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier,
+                      screenOf(editor, 2, 2));
+    QTest::mouseMove(&editor, screenOf(editor, 62, 62), 10);
+    application.processEvents();
+    QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier,
+                        screenOf(editor, 62, 62));
+    application.processEvents();
+    if (editor.pixelClipShapeForTest() != CaptureEditor::PixelClipShape::Rect) {
+      error = QStringLiteral("rect+snap changed the draw shape");
+      return false;
+    }
+    if (editor.lockedClipOpForTest().shape != ClipShape::Rect) {
+      error = QStringLiteral("rect+snap around a square did not lock a rectangle");
+      return false;
+    }
+    if (lockWasLooseDrag(editor.pixelClipRectForTest())) {
+      error = QStringLiteral(
+          "rect+snap around a square kept the loose drag instead of the square");
+      return false;
+    }
+    editor.close();
+  }
+
+  // Rect + Snap around a rounded card locks a rounded rect, not a sharp box.
+  {
+    CaptureEditor editor(fixtureCapture(roundedCardImage()),
+                         CaptureEditor::CaptureMode::File);
+    editor.resize(800, 600);
+    editor.show();
+    application.processEvents();
+    const QRectF snapChip =
+        editor.toolbarButtonRectForTest(QStringLiteral("clip-shape-snap"));
+    QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
+                      snapChip.center().toPoint());
+    application.processEvents();
+    QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier,
+                      screenOf(editor, 2, 2));
+    QTest::mouseMove(&editor, screenOf(editor, 62, 62), 10);
+    application.processEvents();
+    QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier,
+                        screenOf(editor, 62, 62));
+    application.processEvents();
+    const ClipOp locked = editor.lockedClipOpForTest();
+    if (locked.shape != ClipShape::Rect || locked.radius < 5.0) {
+      error = QStringLiteral(
+                  "rect+snap on a rounded card did not lock a corner radius "
+                  "(radius=%1)")
+                  .arg(locked.radius);
+      return false;
+    }
+    if (!saveGrab(editor, outputRoot + QStringLiteral("-clip-rounded-card.png"),
+                  error))
+      return false;
+    editor.close();
+  }
+
+  // Snap on does not replace a real lasso with a click-snap on release.
+  {
+    CaptureEditor editor(fixtureCapture(source),
+                         CaptureEditor::CaptureMode::File);
+    editor.resize(800, 600);
+    editor.show();
+    application.processEvents();
+    QTest::keyClick(&editor, Qt::Key_V);
+    application.processEvents();
+    QTest::keyClick(&editor, Qt::Key_V);
+    application.processEvents();
+    const QRectF snapChip =
+        editor.toolbarButtonRectForTest(QStringLiteral("clip-shape-snap"));
+    QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
+                      snapChip.center().toPoint());
+    application.processEvents();
+    if (!editor.pixelClipSnapEnabledForTest() ||
+        editor.pixelClipShapeForTest() !=
+            CaptureEditor::PixelClipShape::Lasso) {
+      error = QStringLiteral("could not arm lasso with snap on");
+      return false;
+    }
+    QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier,
+                      screenOf(editor, 20, 20));
+    application.processEvents();
+    const QPoint lasso[] = {screenOf(editor, 90, 20), screenOf(editor, 90, 90),
+                            screenOf(editor, 20, 90), screenOf(editor, 22, 22)};
+    for (const QPoint &corner : lasso) {
+      QTest::mouseMove(&editor, corner, 5);
+      application.processEvents();
+    }
+    QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier,
+                        screenOf(editor, 22, 22));
+    application.processEvents();
+    if (editor.pixelClipPointsForTest().size() < 3 ||
+        editor.lockedClipOpForTest().shape != ClipShape::Lasso) {
+      error = QStringLiteral("snap-on closed lasso did not keep the lasso path");
       return false;
     }
     editor.close();

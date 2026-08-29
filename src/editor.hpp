@@ -152,7 +152,7 @@ public:
     Ocr,
     Eyedropper
   };
-  enum class PixelClipShape { Rect, Ellipse, Lasso, Snap };
+  enum class PixelClipShape { Rect, Ellipse, Lasso };
 
 private:
   enum class Phase { Select, Export, Edit };
@@ -282,6 +282,13 @@ public:
   [[nodiscard]] PixelClipShape pixelClipShapeForTest() const {
     return pixelClipShape_;
   }
+  [[nodiscard]] QVector<QPointF> pixelClipPointsForTest() const {
+    return pixelClipPoints_;
+  }
+  [[nodiscard]] bool pixelClipSnapEnabledForTest() const {
+    return pixelClipSnapEnabled_;
+  }
+  [[nodiscard]] ClipOp lockedClipOpForTest() const { return lockedClipOp(); }
   [[nodiscard]] bool clipLiftActiveForTest() const { return clipLiftActive_; }
   [[nodiscard]] QColor clipFillForTest() const { return clipFill_; }
   [[nodiscard]] QRectF clipFillMenuRectForTest() const {
@@ -362,6 +369,9 @@ public:
   }
   [[nodiscard]] QRectF toolbarButtonRectForTest(const QString &action) const {
     for (const ToolbarButton &button : toolbarButtons())
+      if (button.action == action)
+        return button.rect;
+    for (const ToolbarButton &button : clipShapeStripButtons())
       if (button.action == action)
         return button.rect;
     return {};
@@ -564,8 +574,22 @@ private:
   void clearPixelClip();
   void cyclePixelClipShape();
   void setPixelClipShape(PixelClipShape shape);
+  void setPixelClipSnapEnabled(bool enabled);
+  [[nodiscard]] QString clipShapeStatus(bool hadLock) const;
   [[nodiscard]] ClipOp lockedClipOp() const;
   [[nodiscard]] QPainterPath logicalClipPath() const;
+  [[nodiscard]] QRectF pixelClipDragBounds() const;
+  struct LogicalSnap {
+    QRectF box;
+    qreal radius = 0;
+    QVector<QPointF> contour;
+  };
+  [[nodiscard]] std::optional<QRectF>
+  mapNativeSnap(const std::optional<QRect> &box) const;
+  [[nodiscard]] std::optional<LogicalSnap>
+  snapLogicalObjectAt(const QPointF &annotationPoint,
+                      const QRectF &logicalRoi = {},
+                      PixelClipShape shape = PixelClipShape::Rect) const;
   void trySnapAt(const QPointF &annotationPoint, bool resetFill = true);
   void beginClipLift(const QPointF &point);
   void updateClipLift(const QPointF &point);
@@ -579,8 +603,10 @@ private:
   [[nodiscard]] Interaction pixelClipHandleAt(const QPointF &point) const;
   [[nodiscard]] QRectF pixelClipWidgetRect() const;
   [[nodiscard]] QRectF clipFillMenuRect() const;
+  [[nodiscard]] QColor clipSurroundingFill() const;
   [[nodiscard]] QRect clipLiftRepaintRect() const;
-  void paintClipHolePreview(QPainter &painter, const QRectF &hole) const;
+  void paintClipHolePreview(QPainter &painter,
+                            const QRectF &sourceImage) const;
   void setClipFill(const QColor &fill);
   void commitCanvasBoundary(CanvasBoundaryMode mode);
   void cycleCanvasBoundary(bool reverse);
@@ -599,6 +625,10 @@ private:
   void runOcr(const QRectF &localSelection = {});
   void dismissOcrOverlay();
   void paintOcrOverlay(QPainter &painter, const QRectF &image, qreal scale);
+  void startSnapTrace(bool loop);
+  void stopSnapTrace();
+  [[nodiscard]] QPainterPath snapTracePath() const;
+  void paintSnapTrace(QPainter &painter, qreal scale) const;
   void setStatus(QString status);
   void toggleShapeFill();
   void toggleTextBackground();
@@ -697,10 +727,17 @@ private:
   /// Select-tool pixel clip: empty-canvas marquee that hit no layers becomes
   /// a locked path on the source. Dragging it lifts a clip layer.
   PixelClipShape pixelClipShape_ = PixelClipShape::Rect;
+  bool pixelClipSnapEnabled_ = false;
+  bool pixelClipLockedEllipse_ = false;
+  std::optional<QRectF> pixelClipTraceSnap_;
+  qreal pixelClipTraceRadius_ = 0;
+  QVector<QPointF> pixelClipTracePoints_;
   QRectF pixelClipRect_;
   QRectF originalPixelClip_;
   QVector<QPointF> pixelClipPoints_;
   QVector<QPointF> originalPixelClipPoints_;
+  qreal pixelClipRadius_ = 0;
+  qreal originalPixelClipRadius_ = 0;
   bool pixelClipResizing_ = false;
   bool clipLiftActive_ = false;
   QRectF clipLiftOrigin_;
@@ -872,6 +909,10 @@ private:
   QElapsedTimer ocrClock_;
   QTimer ocrAnimTimer_;
   QTimer ocrResultTimer_;
+  QTimer snapAnimTimer_;
+  QElapsedTimer snapAnimClock_;
+  bool snapTraceLoop_ = false;
+  bool snapTraceRevealing_ = false;
 };
 
 [[nodiscard]] QPointF constrainedCreationEndpoint(CaptureEditor::Tool tool,

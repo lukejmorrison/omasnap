@@ -22,6 +22,25 @@ bool runClipSmoke(QString &error) {
   source.fill(QColor(40, 180, 60, 255));
   source.setPixelColor(2, 3, QColor(220, 50, 0, 255));
 
+  QImage page(32, 32, QImage::Format_ARGB32_Premultiplied);
+  page.fill(QColor(80, 120, 200, 255));
+  {
+    QPainter painter(&page);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(220, 50, 0, 255));
+    painter.drawRect(QRect(8, 8, 16, 16));
+  }
+  const QColor around = sampleClipSurroundings(page, QRect(8, 8, 16, 16));
+  if (around.red() < 70 || around.red() > 90 || around.blue() < 190) {
+    error = QStringLiteral("sampleClipSurroundings missed the page colour");
+    return false;
+  }
+  if (clipFillOpaque(sampleClipSurroundings(page, page.rect()))) {
+    error = QStringLiteral(
+        "sampleClipSurroundings invented a colour with no outside ring");
+    return false;
+  }
+
   const QRect region(2, 2, 3, 3);
   const QImage tile = copyRect(source, region);
   if (tile.size() != QSize(3, 3) ||
@@ -237,6 +256,247 @@ bool runClipSmoke(QString &error) {
   }
   if (snapEllipseRect(disk, QPoint(1, 1))) {
     error = QStringLiteral("snapEllipseRect snapped empty field");
+    return false;
+  }
+
+  // A round portrait sitting on a rectangular card: the circle, not the card.
+  QImage card(64, 64, QImage::Format_ARGB32_Premultiplied);
+  card.fill(QColor(18, 18, 22, 255));
+  {
+    QPainter painter(&card);
+    painter.setRenderHint(QPainter::Antialiasing, false);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(40, 44, 52, 255));
+    painter.drawRect(QRect(6, 8, 52, 48));
+    painter.setBrush(QColor(180, 190, 200, 255));
+    painter.drawEllipse(QRect(16, 16, 32, 32));
+  }
+  const std::optional<QRect> portrait =
+      snapEllipseRect(card, QPoint(32, 32));
+  if (!portrait || portrait->width() > 40 || portrait->height() > 40 ||
+      portrait->width() < 24 || !portrait->contains(32, 32)) {
+    error = QStringLiteral(
+        "snapEllipseRect took the card instead of the circular portrait");
+    return false;
+  }
+
+  if (!clipTraceSnapFits(QRectF(4, 4, 28, 28), QRectF(6, 6, 20, 20))) {
+    error = QStringLiteral("clipTraceSnapFits rejected a tracing ellipse");
+    return false;
+  }
+  if (clipTraceSnapFits(QRectF(0, 0, 32, 32), QRectF(6, 6, 8, 8))) {
+    error = QStringLiteral("clipTraceSnapFits accepted a tiny object in a huge drag");
+    return false;
+  }
+  if (clipTraceSnapFits(QRectF(14, 14, 8, 8), QRectF(6, 6, 20, 20))) {
+    error = QStringLiteral("clipTraceSnapFits accepted a drag that has not covered the object");
+    return false;
+  }
+  if (clipTraceSnapFits(QRectF(0, 0, 10, 10), QRectF(20, 20, 8, 8))) {
+    error = QStringLiteral("clipTraceSnapFits accepted a snap whose centre is outside the drag");
+    return false;
+  }
+  if (clipTraceSnapFits(QRectF(20, 20, 70, 70), QRectF(12, 47, 112, 34))) {
+    error = QStringLiteral("clipTraceSnapFits accepted a wide band as a traced circle");
+    return false;
+  }
+
+  QImage plate(32, 32, QImage::Format_ARGB32_Premultiplied);
+  plate.fill(QColor(20, 20, 40, 255));
+  {
+    QPainter painter(&plate);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(220, 80, 40, 255));
+    painter.drawRect(QRect(6, 8, 20, 16));
+  }
+  const std::optional<QRect> snappedRect = snapRectRect(plate, QPoint(16, 16));
+  if (!snappedRect || !snappedRect->contains(16, 16) ||
+      snappedRect->width() < 16 || snappedRect->height() < 12 ||
+      snappedRect->width() > 24 || snappedRect->height() > 20) {
+    error = QStringLiteral("snapRectRect missed the synthetic rectangle");
+    return false;
+  }
+  if (snapRectRect(plate, QPoint(1, 1))) {
+    error = QStringLiteral("snapRectRect snapped empty field");
+    return false;
+  }
+  if (!clipRectTraceSnapFits(QRectF(2, 2, 28, 28), QRectF(6, 8, 20, 16))) {
+    error = QStringLiteral("clipRectTraceSnapFits rejected a tracing rectangle");
+    return false;
+  }
+  if (clipRectTraceSnapFits(QRectF(20, 20, 70, 70), QRectF(12, 47, 112, 34))) {
+    error = QStringLiteral(
+        "clipRectTraceSnapFits accepted a wide band as a traced rectangle");
+    return false;
+  }
+
+  QImage roundField(48, 48, QImage::Format_ARGB32_Premultiplied);
+  roundField.fill(QColor(20, 20, 40, 255));
+  {
+    QPainter painter(&roundField);
+    painter.setRenderHint(QPainter::Antialiasing, false);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(220, 80, 40, 255));
+    painter.drawRoundedRect(QRect(6, 6, 36, 36), 8, 8);
+  }
+  const std::optional<ClipSnapHit> rounded =
+      snapObject(roundField, QPoint(24, 24));
+  if (!rounded || rounded->box.width() < 28 || rounded->radius < 5.0) {
+    error = QStringLiteral("snapObject missed the rounded rectangle");
+    return false;
+  }
+  ClipOp roundOp;
+  roundOp.shape = ClipShape::Rect;
+  roundOp.sourceRect = rounded->box;
+  roundOp.radius = rounded->radius;
+  const QImage roundTile = copyMasked(roundField, roundOp);
+  if (roundTile.isNull() || roundTile.pixelColor(0, 0).alpha() != 0) {
+    error = QStringLiteral("copyMasked rounded rect kept a bbox corner");
+    return false;
+  }
+  const QPoint inner(roundTile.width() / 2, roundTile.height() / 2);
+  if (roundTile.pixelColor(inner).alpha() == 0) {
+    error = QStringLiteral("copyMasked rounded rect dropped the interior");
+    return false;
+  }
+  if (rounded->contour.size() < 8) {
+    error = QStringLiteral("snapObject did not trace a silhouette");
+    return false;
+  }
+
+  // Two square top corners must not zero out a round-bottom card.
+  QImage banner(48, 48, QImage::Format_ARGB32_Premultiplied);
+  banner.fill(QColor(20, 20, 40, 255));
+  {
+    QPainter painter(&banner);
+    painter.setRenderHint(QPainter::Antialiasing, false);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(220, 80, 40, 255));
+    painter.drawRoundedRect(QRect(6, 6, 36, 36), 8, 8);
+    painter.drawRect(QRect(6, 6, 36, 10));
+  }
+  const std::optional<ClipSnapHit> roundBottom =
+      snapObject(banner, QPoint(24, 24));
+  if (!roundBottom || roundBottom->radius < 5.0) {
+    error = QStringLiteral(
+        "snapObject dropped corner radius because two corners were square");
+    return false;
+  }
+
+  // A 1 px close must not swallow a nearby glyph and kill the card radius.
+  QImage chat(48, 48, QImage::Format_ARGB32_Premultiplied);
+  chat.fill(QColor(18, 18, 22, 255));
+  {
+    QPainter painter(&chat);
+    painter.setRenderHint(QPainter::Antialiasing, false);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(40, 42, 48, 255));
+    painter.drawRoundedRect(QRect(12, 8, 32, 32), 8, 8);
+    painter.setBrush(QColor(200, 200, 210, 255));
+    painter.drawRect(QRect(1, 18, 8, 10));
+  }
+  const std::optional<ClipSnapHit> chatCard =
+      snapObject(chat, QPoint(28, 24), QRect(0, 0, 48, 48));
+  if (!chatCard || chatCard->box.left() < 10 || chatCard->radius < 5.0) {
+    error = QStringLiteral(
+        "snapObject merged a nearby glyph into the rounded card");
+    return false;
+  }
+
+  // Gray card chrome on gray paper: the bright thumb must not steal the left
+  // edge. The drag (roi) is the search window.
+  QImage letter(48, 48, QImage::Format_ARGB32_Premultiplied);
+  letter.fill(QColor(80, 80, 84, 255));
+  {
+    QPainter painter(&letter);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(102, 102, 110, 255));
+    painter.drawRect(QRect(8, 10, 32, 24));
+    painter.setBrush(QColor(220, 180, 40, 255));
+    painter.drawRect(QRect(11, 13, 12, 12));
+  }
+  const QRect cardRoi(6, 8, 36, 28);
+  const std::optional<ClipSnapHit> chrome =
+      snapObject(letter, QPoint(24, 22), cardRoi);
+  if (!chrome || chrome->box.left() > 8) {
+    error = QStringLiteral(
+        "snapObject missed gray card chrome to the left of the thumbnail");
+    return false;
+  }
+
+  // Circle with a pin: a drag around it must cover the protrusion.
+  QImage badge(48, 48, QImage::Format_ARGB32_Premultiplied);
+  badge.fill(QColor(16, 16, 20, 255));
+  {
+    QPainter painter(&badge);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(200, 190, 80, 255));
+    painter.drawEllipse(QRect(8, 8, 24, 24));
+    painter.drawRect(QRect(20, 18, 16, 4));
+  }
+  const std::optional<QRect> withPin =
+      snapEllipseRect(badge, QPoint(20, 20), QRect(4, 4, 40, 40));
+  if (!withPin || withPin->right() < 35) {
+    error = QStringLiteral(
+        "snapEllipseRect inside a drag clipped the circular badge's pin");
+    return false;
+  }
+  const std::optional<ClipSnapHit> pinBlob =
+      snapObject(badge, QPoint(20, 20), QRect(4, 4, 40, 40));
+  if (!pinBlob || pinBlob->box.right() < 35 || pinBlob->contour.size() < 8) {
+    error = QStringLiteral(
+        "snapObject lasso silhouette dropped the badge pin");
+    return false;
+  }
+
+  // Achievements-wheel case: a checker disk on dark paper. Dark cells sit
+  // near paper luma so 4-connected flood from one light square dies; Hough
+  // then votes the clean circle and clips the yellow pin.
+  QImage wheel(48, 48, QImage::Format_ARGB32_Premultiplied);
+  wheel.fill(QColor(10, 10, 12, 255));
+  for (int y = 8; y <= 31; ++y) {
+    for (int x = 8; x <= 31; ++x) {
+      const qreal dx = x - 19.5;
+      const qreal dy = y - 19.5;
+      if (dx * dx + dy * dy > 12.0 * 12.0)
+        continue;
+      wheel.setPixelColor(x, y,
+                          ((x + y) % 2 == 0) ? QColor(200, 190, 80, 255)
+                                             : QColor(16, 16, 18, 255));
+    }
+  }
+  {
+    QPainter painter(&wheel);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(240, 200, 40, 255));
+    painter.drawRect(QRect(28, 18, 12, 4));
+  }
+  const QRect wheelRoi(4, 4, 40, 40);
+  const std::optional<QRect> checkerPin =
+      snapEllipseRect(wheel, QPoint(20, 20), wheelRoi);
+  if (!checkerPin || checkerPin->right() < 38) {
+    error = QStringLiteral(
+        "snapEllipseRect on a checker wheel clipped the yellow pin");
+    return false;
+  }
+  const std::optional<QRect> darkSeed =
+      snapEllipseRect(wheel, QPoint(21, 20), wheelRoi);
+  if (!darkSeed || darkSeed->right() < 38) {
+    error = QStringLiteral(
+        "snapEllipseRect from a dark checker cell clipped the yellow pin");
+    return false;
+  }
+  const std::optional<ClipSnapHit> checkerBlob =
+      snapObject(wheel, QPoint(21, 20), wheelRoi);
+  if (!checkerBlob || checkerBlob->box.right() < 38) {
+    error = QStringLiteral(
+        "snapObject from a dark checker cell dropped the yellow pin");
+    return false;
+  }
+  const std::optional<QRect> clickPin = snapEllipseRect(wheel, QPoint(20, 20));
+  if (!clickPin || clickPin->right() < 38) {
+    error = QStringLiteral(
+        "click-snap on a checker wheel clipped the yellow pin");
     return false;
   }
 
