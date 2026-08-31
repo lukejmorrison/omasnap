@@ -1,6 +1,5 @@
-/** @fileoverview Band cut-out engine: removes a horizontal or vertical band
- *  from an image and collapses the gap (Snagit-style "cut out", ported from
- *  omapic). */
+/** @fileoverview Band cut engine: removes a horizontal or vertical band and
+ *  collapses the gap, or inserts transparent space at the seam. */
 #include "cut.hpp"
 
 #include <QPainter>
@@ -48,6 +47,10 @@ QImage insertBand(const QImage &source, Qt::Orientation orientation,
                   int start, int end) {
   if (source.isNull())
     return source;
+  const int extent =
+      orientation == Qt::Horizontal ? source.height() : source.width();
+  start = std::clamp(start, 0, extent);
+  end = std::clamp(end, start, extent);
   const int band = end - start;
   if (band <= 0)
     return source;
@@ -57,7 +60,6 @@ QImage insertBand(const QImage &source, Qt::Orientation orientation,
     image = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
   if (orientation == Qt::Horizontal) {
     const int height = image.height();
-    start = std::clamp(start, 0, height);
     QImage out(image.width(), height + band, image.format());
     out.setDevicePixelRatio(image.devicePixelRatio());
     out.fill(Qt::transparent);
@@ -69,7 +71,6 @@ QImage insertBand(const QImage &source, Qt::Orientation orientation,
     return out;
   }
   const int width = image.width();
-  start = std::clamp(start, 0, width);
   QImage out(width + band, image.height(), image.format());
   out.setDevicePixelRatio(image.devicePixelRatio());
   out.fill(Qt::transparent);

@@ -3935,9 +3935,7 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
       commitBackground(backgroundStyle_, next);
     } else
       cycleBackground();
-  } else if (tool_ == Tool::Cut &&
-             (event->key() == Qt::Key_Control ||
-              event->key() == Qt::Key_Meta)) {
+  } else if (tool_ == Tool::Cut && event->key() == Qt::Key_Control) {
     setStatus(QStringLiteral("Insert a band · drag across"));
   } else if (event->key() >= Qt::Key_1 && event->key() <= Qt::Key_8) {
     colorIndex_ = event->key() - Qt::Key_1;
@@ -3963,8 +3961,7 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
 
 void CaptureEditor::keyReleaseEvent(QKeyEvent *event) {
   modifiersSeen_ = true;
-  if (tool_ == Tool::Cut &&
-      (event->key() == Qt::Key_Control || event->key() == Qt::Key_Meta) &&
+  if (tool_ == Tool::Cut && event->key() == Qt::Key_Control &&
       !cutDragActive_) {
     setStatus(QStringLiteral("Cut: drag across a band to remove it"));
     QWidget::keyReleaseEvent(event);
